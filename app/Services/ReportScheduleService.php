@@ -31,10 +31,10 @@ class ReportScheduleService
     {
         if ($s['frequency'] === 'monthly') {
             $day = max(1, min(28, (int) $s['month_day']));
-            return $now->setDate((int) $now->format('Y'), (int) $now->format('n'), $day)->setTime((int) $s['send_hour'], 0);
+            return $now->setDate((int) $now->format('Y'), (int) $now->format('n'), $day)->setTime((int) $s['send_hour'], (int) ($s['send_minute'] ?? 0));
         }
         $monday = $now->modify('monday this week');
-        return $monday->modify('+' . (max(1, min(7, (int) $s['weekday'])) - 1) . ' days')->setTime((int) $s['send_hour'], 0);
+        return $monday->modify('+' . (max(1, min(7, (int) $s['weekday'])) - 1) . ' days')->setTime((int) $s['send_hour'], (int) ($s['send_minute'] ?? 0));
     }
 
     /** Пора надсилати: час настав, а попередній успішний запуск був раніше за нього (є «наздоганяння» пропущеного cron). */
@@ -171,9 +171,36 @@ class ReportScheduleService
         return ['name' => $baseName . '.xlsx', 'mime' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'data' => TableExport::xlsx($headers, $table, 'Облік часу')];
     }
 
+    /** «Звіт по тікетах» за розкладом: тікети, створені за попередній період; адміністратор підрозділу бачить лише тікети свого підрозділу. */
+    public static function buildTickets(array $s, \DateTimeImmutable $now): array
+    {
+        $role = (string) ($s['owner_role'] ?? '');
+        if ($role !== 'admin' && !\App\Core\Access::isUnitAdmin($role)) {
+            throw new \RuntimeException('звіт по тікетах доступний лише адміністратору системи й адміністратору підрозділу');
+        }
+        [$from, $to, $label] = self::period((string) $s['frequency'], $now);
+        $f = ['date_from' => $from, 'date_to' => $to, 'queue_id' => $s['queue_id'] ?: null, 'operator_id' => $s['operator_id'] ?: null, 'status' => ''];
+        $unit = $role !== 'admin';
+        $src = \App\Models\Ticket::workReportRows($f, $unit ? (int) $s['user_id'] : null, TableExport::MAX_ROWS);
+        $base = 'tickets-report_' . $from . '_' . $to;
+        $fmt = (string) $s['format'];
+        if ($fmt === 'pdf') {
+            $att = ['name' => $base . '.pdf', 'mime' => 'application/pdf', 'data' => TicketWorkReport::pdf($f, $src, $unit)->toString()];
+        } elseif ($fmt === 'csv') {
+            $att = ['name' => $base . '.csv', 'mime' => 'text/csv; charset=utf-8', 'data' => TableExport::csv(TicketWorkReport::HEADERS, TicketWorkReport::tableRows($src))];
+        } else {
+            $att = ['name' => $base . '.xlsx', 'mime' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'data' => TableExport::xlsx(TicketWorkReport::HEADERS, TicketWorkReport::tableRows($src), 'Звіт по тікетах')];
+        }
+        return $att + ['rows' => count($src), 'hours' => (float) array_sum(array_column($src, 'spent_hours')), 'label' => $label];
+    }
+
     /** @return array{name: string, mime: string, data: string, rows: int, hours: float} */
     public static function build(array $s, \DateTimeImmutable $now): array
     {
+        if (($s['report_type'] ?? 'time') === 'tickets') {
+            return self::buildTickets($s, $now);
+        }
         $d = self::data($s, $now);
         $att = self::file((string) $s['format'], $d['rows'], $d['filterLines'], 'report_' . $d['from'] . '_' . $d['to']);
         return $att + ['rows' => count($d['rows']), 'hours' => (float) array_sum(array_column($d['rows'], 'hours')), 'label' => $d['label']];
@@ -196,8 +223,10 @@ class ReportScheduleService
             return ['ok' => false, 'message' => 'Помилка побудови звіту: ' . $e->getMessage()];
         }
         $subject = '[ITSM] ' . $s['name'] . ' — ' . $att['label'];
-        $body = "Звіт з обліку часу за розкладом «{$s['name']}» ({$att['label']}).\n"
-            . ($att['rows'] > 0 ? "Записів: {$att['rows']}, годин: " . number_format($att['hours'], 2) . ".\n" : "За цей період записів обліку часу немає.\n")
+        $tickets = ($s['report_type'] ?? 'time') === 'tickets';
+        $body = ($tickets ? 'Звіт по тікетах' : 'Звіт з обліку часу') . " за розкладом «{$s['name']}» ({$att['label']}).\n"
+            . ($att['rows'] > 0 ? ($tickets ? "Тікетів: {$att['rows']}, витрачено годин: " : "Записів: {$att['rows']}, годин: ") . number_format($att['hours'], 2) . ".\n"
+                : ($tickets ? "За цей період тікетів немає.\n" : "За цей період записів обліку часу немає.\n"))
             . "Файл — у вкладенні.\n\nЛист сформовано автоматично. Керувати розкладами: " . rtrim(Setting::appUrl(), '/') . "/reports/schedules\n";
         $failed = [];
         foreach (self::recipients($s) as $to) {

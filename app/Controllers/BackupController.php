@@ -202,6 +202,40 @@ class BackupController
         $this->redirect('success', 'Збережено: тримати останніх копій — ' . $keep . ($removed ? '. Видалено зайві: ' . count($removed) : '') . '.');
     }
 
+    /** «Перешифрувати копії»: старий пароль (порожньо — BACKUP_PASSWORD з .env) → новий. Не змінює .env: після цього його треба оновити вручну. */
+    public function reencrypt(): void
+    {
+        $old = (string) ($_POST['old_password'] ?? '');
+        $old = $old !== '' ? $old : BackupService::password();
+        $new = (string) ($_POST['new_password'] ?? '');
+        if ($old === '') {
+            $this->redirect('error', 'Вкажіть старий пароль (у .env BACKUP_PASSWORD порожній).');
+        }
+        if (mb_strlen($new) < 12) {
+            $this->redirect('error', 'Новий пароль має містити щонайменше 12 символів.');
+        }
+        if ($new !== (string) ($_POST['new_password2'] ?? '')) {
+            $this->redirect('error', 'Новий пароль і підтвердження не збігаються.');
+        }
+        if ($new === $old) {
+            $this->redirect('error', 'Новий пароль збігається зі старим.');
+        }
+        try {
+            $r = BackupService::reencryptAll($old, $new);
+        } catch (\Throwable $e) {
+            $this->redirect('error', $e->getMessage());
+        }
+        Audit::log('backup', 0, 'reencrypted', (int) Auth::id(), ['done' => count($r['done']), 'failed' => count($r['failed'])]);
+        $msg = 'Перешифровано копій: ' . count($r['done']) . '.';
+        if ($r['failed']) {
+            $msg .= ' Не вдалося (лишились зі старим паролем): ' . implode('; ', array_map(static fn($n, $m) => $n . ' — ' . $m, array_keys($r['failed']), $r['failed'])) . '.';
+        }
+        if ($r['done']) {
+            $msg .= ' Тепер змініть BACKUP_PASSWORD у .env на новий пароль, інакше нові копії шифруватимуться старим.';
+        }
+        $this->redirect($r['failed'] && !$r['done'] ? 'error' : 'success', $msg);
+    }
+
     private function redirect(string $key, string $message): never
     {
         header('Location: /admin/backup?' . $key . '=' . urlencode($message));

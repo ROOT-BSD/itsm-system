@@ -169,7 +169,7 @@ class WikiPage
      * Статті, схожі на текст звернення (тема + опис): «База знань». $role = null — лише публічні сторінки (портал).
      * Слова ≥ 3 літер (крім службових) зводяться до основи (відкидається закінчення), збіг у назві важить більше, ніж у тексті.
      *
-     * @return array<int, array{slug: string, title: string, excerpt: string, score: int}>
+     * @return array<int, array{slug: string, title: string, visibility: string, excerpt: string, score: int}>
      */
     public static function suggest(string $text, ?string $role, int $limit = 5): array
     {
@@ -187,7 +187,7 @@ class WikiPage
         }
         $allowed = self::wikiVisibilities($role);
         $in = implode(',', array_fill(0, count($allowed), '?'));
-        $stmt = Database::connection()->prepare("SELECT p.id, p.slug, p.title FROM wiki_pages p WHERE p.visibility IN ($in) ORDER BY p.sort_order ASC, p.title ASC LIMIT 400");
+        $stmt = Database::connection()->prepare("SELECT p.id, p.slug, p.title, p.visibility FROM wiki_pages p WHERE p.visibility IN ($in) ORDER BY p.sort_order ASC, p.title ASC LIMIT 400");
         $stmt->execute($allowed);
         $found = [];
         foreach ($stmt->fetchAll() as $row) {
@@ -205,7 +205,7 @@ class WikiPage
             }
             if ($score > 0) {
                 $plain = trim((string) preg_replace('/\s+/u', ' ', \App\Core\Markdown::plainText($content)));
-                $found[] = ['slug' => $row['slug'], 'title' => $row['title'], 'excerpt' => mb_strlen($plain) > 140 ? mb_substr($plain, 0, 140) . '…' : $plain, 'score' => $score];
+                $found[] = ['slug' => $row['slug'], 'title' => $row['title'], 'visibility' => $row['visibility'], 'excerpt' => mb_strlen($plain) > 140 ? mb_substr($plain, 0, 140) . '…' : $plain, 'score' => $score];
             }
         }
         usort($found, static fn(array $a, array $b): int => $b['score'] <=> $a['score']);

@@ -103,4 +103,63 @@ class TicketWorkReport
             'byOperator' => self::group($rows, 'operator_id', 'operator_name', 'Не призначено'),
         ];
     }
+
+    /** Заголовки таблиці XLSX/CSV «Звіту по тікетах». */
+    public const HEADERS = [
+        '№', 'Тема', 'Черга', 'Заявник', 'Оператор', 'Статус', 'Створено', 'Перша відповідь', 'Вирішено',
+        'До першої відповіді, год', 'До вирішення, год', 'Витрачено, год',
+    ];
+
+    /** Рядки таблиці XLSX/CSV за рядками Ticket::workReportRows(). */
+    public static function tableRows(array $src): array
+    {
+        $fmt = static fn(?float $m) => $m === null ? '' : round($m / 60, 2);
+        $rows = [];
+        foreach ($src as $t) {
+            $rows[] = [
+                (int) $t['id'], $t['subject'], $t['queue_name'], $t['requester_name'], $t['operator_name'] ?? '',
+                \App\Models\Ticket::statusLabel((string) $t['status']), $t['created_at'], $t['first_response_at'] ?? '', $t['resolved_at'] ?? '',
+                $fmt($t['response_min'] !== null ? (float) $t['response_min'] : null), $fmt($t['resolution_min'] !== null ? (float) $t['resolution_min'] : null),
+                round((float) $t['spent_hours'], 2),
+            ];
+        }
+        return $rows;
+    }
+
+    /** PDF «Звіту по тікетах»: підсумок, розбивки за чергами й операторами та список тікетів. */
+    public static function pdf(array $f, array $src, bool $unit): \App\Core\PdfReport
+    {
+        $d = self::build($src);
+        $dur = static fn(array $s) => $s['n'] > 0 ? self::duration($s['avg']) . ' / ' . self::duration($s['median']) : '—';
+        $lines = ['Період створення: ' . $f['date_from'] . ' — ' . $f['date_to']];
+        if ($unit) {
+            $lines[] = 'Лише тікети підрозділу';
+        }
+        $lines[] = 'Час календарний (без урахування вихідних і робочих годин). Сформовано: ' . date('d.m.Y H:i');
+        $pdf = new \App\Core\PdfReport('Звіт по тікетах', $lines);
+        $s = $d['summary'];
+        $pdf->line('Створено: ' . $s['total'] . '; вирішено/закрито: ' . $s['resolved'] . '; відкрито: ' . $s['open']);
+        $pdf->line('Витрачено годин (облік часу в тікетах): ' . number_format((float) $s['hours'], 2));
+        $pdf->line('До першої відповіді (середній / медіана): ' . $dur($s['response']));
+        $pdf->line('До вирішення (середній / медіана): ' . $dur($s['resolution']));
+        $cols = fn(string $first) => [
+            ['header' => $first, 'width' => 38], ['header' => 'Створено', 'width' => 17], ['header' => 'Вирішено', 'width' => 17],
+            ['header' => 'Відкрито', 'width' => 17], ['header' => 'Годин', 'width' => 14], ['header' => 'Перша відповідь', 'width' => 38], ['header' => 'Вирішення', 'width' => 38],
+        ];
+        $map = static fn(array $g) => array_map(static fn($r) => [$r['name'], $r['total'], $r['resolved'], $r['open'], number_format((float) $r['hours'], 2), $dur($r['response']), $dur($r['resolution'])], $g);
+        $pdf->table('По чергах (середній / медіана)', $cols('Черга'), $map($d['byQueue']));
+        $pdf->table('По операторах (середній / медіана)', $cols('Оператор'), $map($d['byOperator']));
+        $rows = [];
+        foreach ($src as $t) {
+            $rows[] = ['#' . $t['id'], $t['subject'], $t['operator_name'] ?? '—', \App\Models\Ticket::statusLabel((string) $t['status']), $t['created_at'],
+                self::duration($t['response_min'] !== null ? (float) $t['response_min'] : null),
+                self::duration($t['resolution_min'] !== null ? (float) $t['resolution_min'] : null),
+                number_format((float) $t['spent_hours'], 2)];
+        }
+        $pdf->table('Тікети за період (' . count($src) . ')', [
+            ['header' => '№', 'width' => 11], ['header' => 'Тема', 'width' => 36], ['header' => 'Оператор', 'width' => 26], ['header' => 'Статус', 'width' => 20],
+            ['header' => 'Створено', 'width' => 30], ['header' => 'До відповіді', 'width' => 20], ['header' => 'До вирішення', 'width' => 22], ['header' => 'Годин', 'width' => 15],
+        ], $rows);
+        return $pdf;
+    }
 }

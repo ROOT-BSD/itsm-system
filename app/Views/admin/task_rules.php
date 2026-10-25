@@ -4,12 +4,13 @@ $f = $edit ?? [];
 $val = static fn(string $k, $d = '') => $f[$k] ?? $d;
 $prio = \App\Models\Ticket::PRIORITIES;
 ?>
-<div class="mb-3"><?php require __DIR__ . '/_back.php'; ?></div>
+<div class="mb-3"><?php if (!empty($readOnly)) { echo '<a href="/tasks" class="text-decoration-none">&larr; Задачі</a>'; } else { require __DIR__ . '/_back.php'; } ?></div>
 <h3 class="mb-1">Автоматичні правила для задач</h3>
 <p class="text-muted">
-    Правило спрацьовує на <strong>створення задачі</strong> (будь-яким шляхом, зокрема за шаблоном) або <strong>зміну її статусу</strong>, якщо виконуються всі задані умови: ключові слова в назві чи описі, проєкт, пріоритет, виконавець.
-    Дії: призначити виконавця, встановити пріоритет, сповістити «в системі» (центр сповіщень 🔔). Правила перевіряються за порядком (менше число — раніше); <strong>перше, що збіглося, виконується</strong>.
+    Правило спрацьовує на <strong>створення задачі</strong> (будь-яким шляхом, зокрема за шаблоном), <strong>зміну її статусу</strong>, <strong>новий запис у журналі робіт</strong> або <strong>зміну терміну</strong> (вручну), якщо виконуються всі задані умови: ключові слова в назві чи описі, проєкт, пріоритет, виконавець.
+    Дії: призначити виконавця, встановити пріоритет, додати мітку, додати запис у журнал робіт, сповістити «в системі» (центр сповіщень 🔔). Правила перевіряються за порядком (менше число — раніше); <strong>перше, що збіглося, виконується</strong>.
 </p>
+<?php if (!empty($readOnly)): ?><div class="alert alert-secondary py-2"><strong>Лише перегляд:</strong> правила для задач створює й змінює адміністратор системи.</div><?php endif; ?>
 <?php if (!empty($error)): ?><div class="alert alert-danger"><?= $e($error) ?></div><?php endif; ?>
 <?php if (!empty($success)): ?><div class="alert alert-success"><?= $e($success) ?></div><?php endif; ?>
 <?php if (empty($ready)): ?>
@@ -34,23 +35,26 @@ $prio = \App\Models\Ticket::PRIORITIES;
             <td class="small"><?php $acts = [];
                 if ($r['action_assignee_name']) { $acts[] = 'виконавець: ' . $r['action_assignee_name']; }
                 if ($r['action_priority']) { $acts[] = 'пріоритет: ' . $prio[$r['action_priority']]; }
+                if ($r['action_label_name']) { $acts[] = 'мітка: ' . $r['action_label_name']; }
+                if ($r['action_comment']) { $acts[] = 'запис у журнал: «' . mb_strimwidth($r['action_comment'], 0, 50, '…') . '»'; }
                 if ((int) $r['notify_system_assignee']) { $acts[] = 'в системі: виконавцю'; }
                 if ($r['notify_system_users']) { $acts[] = 'в системі: працівників ' . count(array_filter(explode(',', $r['notify_system_users']))); }
                 echo $e(implode('; ', $acts)); ?></td>
             <td class="small"><?= (int) $r['hits'] ?><?= $r['last_hit_at'] ? '<div class="text-muted">' . $e(date('d.m.Y H:i', strtotime($r['last_hit_at']))) . '</div>' : '' ?></td>
             <td><?= (int) $r['is_active'] ? '<span class="badge text-bg-success">увімкнено</span>' : '<span class="badge text-bg-secondary">вимкнено</span>' ?></td>
-            <td class="text-nowrap">
+            <td class="text-nowrap"><?php if (empty($readOnly)): ?>
                 <a class="btn btn-sm btn-outline-primary" href="/admin/task-rules?edit=<?= (int) $r['id'] ?>">Змінити</a>
                 <form method="post" action="/admin/task-rules/<?= (int) $r['id'] ?>/toggle" class="d-inline"><?= \App\Core\Csrf::field() ?>
                     <button class="btn btn-sm btn-outline-secondary" type="submit"><?= (int) $r['is_active'] ? 'Вимкнути' : 'Увімкнути' ?></button></form>
                 <form method="post" action="/admin/task-rules/<?= (int) $r['id'] ?>/delete" class="d-inline" data-confirm="Видалити правило «<?= $e($r['name']) ?>»?"><?= \App\Core\Csrf::field() ?>
                     <button class="btn btn-sm btn-outline-danger" type="submit">Видалити</button></form>
-            </td>
+            <?php endif; ?></td>
         </tr>
     <?php endforeach; endif; ?>
     </tbody>
 </table>
 
+<?php if (empty($readOnly)): ?>
 <div class="card shadow-sm mt-4 form-card-md">
     <div class="card-header"><?= $edit ? 'Зміна правила' : 'Нове правило' ?></div>
     <div class="card-body">
@@ -87,6 +91,13 @@ $prio = \App\Models\Ticket::PRIORITIES;
                 <div class="col-md-6"><label class="form-label">Встановити пріоритет</label>
                     <select name="action_priority" class="form-select"><option value="">— не змінювати —</option>
                         <?php foreach ($prio as $k => $l): ?><option value="<?= $k ?>" <?= $val('action_priority', '') === $k ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
+                <div class="col-md-6"><label class="form-label">Додати мітку</label>
+                    <select name="action_label_id" class="form-select"><option value="">— не додавати —</option>
+                        <?php foreach ($labels ?? [] as $lb): ?><option value="<?= (int) $lb['id'] ?>" <?= (int) $val('action_label_id', 0) === (int) $lb['id'] ? 'selected' : '' ?>><?= $e($lb['name']) ?></option><?php endforeach; ?></select>
+                    <div class="form-text">Мітки спільні з тікетами (Адмін → Мітки тікетів).</div></div>
+                <div class="col-md-6"><label class="form-label">Запис у журнал робіт</label>
+                    <input type="text" name="action_comment" maxlength="1000" class="form-control" value="<?= $e($val('action_comment')) ?>" placeholder="Текст запису (0 год)">
+                    <div class="form-text">Автор — той, хто створив правило (якщо активний), інакше перший адміністратор.</div></div>
                 <div class="col-md-6"><label class="form-label">Сповістити «в системі» (🔔)</label>
                     <select name="notify_system_users[]" multiple size="5" class="form-select">
                         <?php $sel = array_filter(explode(',', (string) $val('notify_system_users', ''))); foreach ($users as $u): ?>
@@ -106,4 +117,5 @@ $prio = \App\Models\Ticket::PRIORITIES;
         </form>
     </div>
 </div>
+<?php endif; /* форма */ ?>
 <?php endif; ?>

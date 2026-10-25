@@ -106,8 +106,9 @@ class Ticket
         $now = time();
         // Норматив залежить від пріоритету: відсоток від базового (звичайний = 100 %).
         $pct = self::slaPriorityPercents()[$ticket['priority'] ?? 'normal'] ?? 100;
-        $responseDueAt = $createdAt + max(60, (int) round((int) $policy['first_response_minutes'] * $pct / 100 * 60));
-        $resolutionDueAt = $createdAt + max(60, (int) round((int) $policy['resolution_minutes'] * $pct / 100 * 60));
+        // Робочий календар (години, вихідні, свята) — якщо ввімкнений; інакше календарний час.
+        $responseDueAt = \App\Services\WorkCalendar::addMinutes($createdAt, max(1, (int) round((int) $policy['first_response_minutes'] * $pct / 100)));
+        $resolutionDueAt = \App\Services\WorkCalendar::addMinutes($createdAt, max(1, (int) round((int) $policy['resolution_minutes'] * $pct / 100)));
 
         return [
             'has_policy' => true,
@@ -668,14 +669,7 @@ class Ticket
             )->execute(['id' => $ticketId]);
         }
 
-        NotificationService::ticketCommentAdded($ticketId, $authorType, $authorId);
-        // Сповіщення в системі: заявнику (коментар працівника) або виконавцю (коментар заявника); автору — ні.
-        if ($t = self::find($ticketId)) {
-            $targets = $authorType === 'requester'
-                ? [$t['assigned_operator_id'] ?? null]
-                : [$t['requester_user_id'] ?? null, $t['assigned_operator_id'] ?? null];
-            self::notifyUsers(array_map('intval', array_filter($targets)), 'Новий коментар у тікеті №' . $ticketId, (string) $t['subject'], $ticketId, $authorId);
-        }
+        NotificationService::ticketCommentAdded($ticketId, $authorType, $authorId, $body);
         \App\Services\WebhookService::emitTicketComment($ticketId, $commentId, $authorId);
         // Правила черги для події «новий коментар».
         \App\Services\TicketRuleService::apply($ticketId, true, 'comment', ['comment_by' => $authorType === 'requester' ? 'requester' : 'staff', 'comment' => $body]);
@@ -688,7 +682,7 @@ class Ticket
         foreach (array_unique($userIds) as $uid) {
             if ($uid > 0 && $uid !== $exceptUserId) {
                 try {
-                    UserNotification::notify($uid, $title, mb_substr($body, 0, 500), '/tickets/' . $ticketId);
+                    UserNotification::notify($uid, $title, mb_substr($body, 0, 500), '/tickets/' . $ticketId, 'tickets');
                 } catch (\Throwable $e) {
                     error_log('Сповіщення в системі: ' . $e->getMessage());
                 }

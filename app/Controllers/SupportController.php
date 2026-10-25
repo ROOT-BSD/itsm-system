@@ -33,7 +33,7 @@ class SupportController
         $items = mb_strlen($q) >= 3 ? \App\Models\WikiPage::suggest(mb_substr($q, 0, 500), null, 5) : [];
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
-        echo json_encode(array_map(static fn(array $i): array => ['title' => $i['title'], 'url' => '/support/kb/' . $i['slug'], 'excerpt' => $i['excerpt']], $items), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        echo json_encode(array_map(static fn(array $i): array => ['title' => $i['title'], 'url' => '/support/kb/' . $i['slug'] . '?from=form', 'excerpt' => $i['excerpt']], $items), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     /** Перелік публічних статей «Бази знань» (без входу); ?q= — пошук за темою. */
@@ -56,20 +56,56 @@ class SupportController
             return;
         }
         $map = [];
+        $files = [];
         foreach (\App\Models\WikiAttachment::forPage((int) $page['id']) as $a) {
+            if (!\App\Models\WikiAttachment::isImage((string) $a['mime_type'])) {
+                $files[] = $a;
+            }
             $map[(int) $a['id']] = ['name' => $a['original_name'], 'mime' => $a['mime_type'], 'image' => \App\Models\WikiAttachment::isImage((string) $a['mime_type']), 'url' => '/support/kb/files/' . (int) $a['id']];
         }
         $renderer = (new \App\Core\Markdown([]))->setAttachments($map);
-        View::render('support/kb', ['page' => $page, 'html' => $renderer->toHtml((string) $page['content'])]);
+        $from = ($_GET['from'] ?? '') === 'form' ? 'form' : 'page';
+        View::render('support/kb', [
+            'page' => $page,
+            'html' => $renderer->toHtml((string) $page['content']),
+            'files' => $files,
+            'from' => $from,
+            'voted' => isset($_COOKIE['kbf_' . (int) $page['id']]),
+            'thanks' => $_GET['thanks'] ?? null,
+            'feedbackReady' => \App\Models\KbFeedback::ready(),
+        ]);
     }
 
-    /** Файл вкладення публічної статті: лише зображення (мініатюра чи оригінал) і лише з публічної сторінки. */
+    /** Відгук «допомогло / не допомогло» до публічної статті (без входу; CSRF перевіряє роутер, один голос на браузер — кукі). */
+    public function kbFeedback(array $params): void
+    {
+        $this->throttle(RateLimiter::attempt('kb'));
+        $slug = (string) ($params['slug'] ?? '');
+        $page = preg_match('/^[a-z0-9-]{1,80}$/', $slug) ? \App\Models\WikiPage::findBySlug($slug) : null;
+        if (!$page || !\App\Models\WikiPage::visibleTo($page, null)) {
+            http_response_code(404);
+            View::render('support/kb_not_found', []);
+            return;
+        }
+        $helpful = ($_POST['helpful'] ?? '') === '1';
+        $cookie = 'kbf_' . (int) $page['id'];
+        if (!isset($_COOKIE[$cookie])) {
+            try {
+                \App\Models\KbFeedback::add((int) $page['id'], $helpful, ($_POST['from'] ?? '') === 'form' ? 'form' : 'page');
+            } catch (\Throwable) {
+            }
+            setcookie($cookie, $helpful ? 'y' : 'n', ['expires' => time() + 86400 * 30, 'path' => '/support/kb', 'secure' => !empty($_SERVER['HTTPS']), 'httponly' => true, 'samesite' => 'Lax']);
+        }
+        header('Location: /support/kb/' . $slug . '?thanks=' . ($helpful ? 'yes' : 'no'));
+    }
+
+    /** Файл вкладення публічної статті з публічної сторінки: зображення — у тексті (мініатюра чи оригінал), решта типів — лише завантаженням. */
     public function kbFile(array $params): void
     {
         $this->throttle(RateLimiter::attempt('kb'));
         $att = \App\Models\WikiAttachment::find((int) ($params['id'] ?? 0));
         $page = $att ? \App\Models\WikiPage::findById((int) $att['page_id']) : null;
-        if (!$att || !$page || !\App\Models\WikiPage::visibleTo($page, null) || !\App\Models\WikiAttachment::isImage((string) $att['mime_type'])) {
+        if (!$att || !$page || !\App\Models\WikiPage::visibleTo($page, null)) {
             http_response_code(404);
             echo 'Не знайдено';
             return;
@@ -80,8 +116,9 @@ class SupportController
             echo 'Не знайдено';
             return;
         }
+        $isImage = \App\Models\WikiAttachment::isImage((string) $att['mime_type']);
         $send = $path;
-        if (isset($_GET['thumb'])) {
+        if ($isImage && isset($_GET['thumb'])) {
             $send = \App\Services\AttachmentService::thumbnailFor($att['stored_name'], $att['mime_type']) ?? $path;
         }
         $mime = $send !== $path ? \App\Services\AttachmentService::thumbMime($att['mime_type']) : $att['mime_type'];
@@ -90,7 +127,14 @@ class SupportController
         }
         header('Content-Type: ' . $mime);
         header('Content-Length: ' . filesize($send));
-        header('Content-Disposition: inline');
+        // Не-зображення завжди як завантаження (з типом application/octet-stream для небезпечних форматів), без вбудованого показу на порталі.
+        $name = (string) $att['original_name'];
+        $ascii = preg_replace('/[^A-Za-z0-9._-]/', '_', $name) ?: 'file';
+        if ($isImage) {
+            header('Content-Disposition: inline');
+        } else {
+            header('Content-Disposition: attachment; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+        }
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: public, max-age=3600');
         readfile($send);
@@ -165,7 +209,10 @@ class SupportController
             return;
         }
 
+        $isFinished = in_array($ticket['status'], ['resolved', 'closed'], true);
         View::render('support/track', [
+            'kbSuggestions' => $isFinished ? [] : \App\Models\WikiPage::suggest((string) $ticket['subject'] . ' ' . mb_substr((string) $ticket['description'], 0, 500), null, 3),
+            'ticketLinks' => \App\Models\TicketLink::forRequester($ticket),
             'ticket' => $ticket,
             'comments' => Ticket::comments($ticket['id']),
             'attachments' => \App\Models\Attachment::forRequester((int) $ticket['id']),

@@ -23,11 +23,12 @@ class TaskRule
         return $ready;
     }
 
-    private const SELECT = "SELECT r.*, p.name AS project_name, au.full_name AS action_assignee_name, ts.name AS when_status_name
+    private const SELECT = "SELECT r.*, p.name AS project_name, au.full_name AS action_assignee_name, ts.name AS when_status_name, lb.name AS action_label_name
                             FROM task_rules r
                             LEFT JOIN projects p ON p.id = r.project_id
                             LEFT JOIN users au ON au.id = r.action_assignee_id
-                            LEFT JOIN task_statuses ts ON ts.id = r.when_status_id";
+                            LEFT JOIN task_statuses ts ON ts.id = r.when_status_id
+                            LEFT JOIN ticket_labels lb ON lb.id = r.action_label_id";
 
     public static function all(): array
     {
@@ -58,16 +59,16 @@ class TaskRule
         $p = [
             'name' => $d['name'], 'sort' => $d['sort_order'], 'ev' => $d['trigger_event'], 'ws' => $d['when_status_id'], 'kw' => $d['keywords'], 'mi' => $d['match_in'],
             'pr' => $d['project_id'], 'cp' => $d['cond_priority'], 'ca' => $d['cond_assignee'], 'aa' => $d['action_assignee_id'], 'ap' => $d['action_priority'],
-            'nsa' => $d['notify_system_assignee'] ? 1 : 0, 'nsu' => $d['notify_system_users'], 'act' => $d['is_active'] ? 1 : 0,
+            'al' => $d['action_label_id'] ?? null, 'ac' => $d['action_comment'] ?? null, 'nsa' => $d['notify_system_assignee'] ? 1 : 0, 'nsu' => $d['notify_system_users'], 'act' => $d['is_active'] ? 1 : 0,
         ];
         $db = Database::connection();
         if ($id === null) {
-            $db->prepare('INSERT INTO task_rules (name, sort_order, trigger_event, when_status_id, keywords, match_in, project_id, cond_priority, cond_assignee, action_assignee_id, action_priority, notify_system_assignee, notify_system_users, is_active, created_by)
-                          VALUES (:name, :sort, :ev, :ws, :kw, :mi, :pr, :cp, :ca, :aa, :ap, :nsa, :nsu, :act, :cb)')->execute($p + ['cb' => $d['created_by']]);
+            $db->prepare('INSERT INTO task_rules (name, sort_order, trigger_event, when_status_id, keywords, match_in, project_id, cond_priority, cond_assignee, action_assignee_id, action_priority, action_label_id, action_comment, notify_system_assignee, notify_system_users, is_active, created_by)
+                          VALUES (:name, :sort, :ev, :ws, :kw, :mi, :pr, :cp, :ca, :aa, :ap, :al, :ac, :nsa, :nsu, :act, :cb)')->execute($p + ['cb' => $d['created_by']]);
             return (int) $db->lastInsertId();
         }
         $db->prepare('UPDATE task_rules SET name = :name, sort_order = :sort, trigger_event = :ev, when_status_id = :ws, keywords = :kw, match_in = :mi, project_id = :pr, cond_priority = :cp,
-                      cond_assignee = :ca, action_assignee_id = :aa, action_priority = :ap, notify_system_assignee = :nsa, notify_system_users = :nsu, is_active = :act WHERE id = :id')->execute($p + ['id' => $id]);
+                      cond_assignee = :ca, action_assignee_id = :aa, action_priority = :ap, action_label_id = :al, action_comment = :ac, notify_system_assignee = :nsa, notify_system_users = :nsu, is_active = :act WHERE id = :id')->execute($p + ['id' => $id]);
         return $id;
     }
 

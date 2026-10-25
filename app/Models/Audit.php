@@ -80,6 +80,7 @@ class Audit
         'email_notify_tickets_enabled' => 'Сповіщення про тікети',
         'email_notify_projects_enabled' => 'Сповіщення про проєкти',
         'email_notify_tasks_enabled' => 'Сповіщення про задачі',
+        'email_notify_task_due_change' => 'Лист про перенесення терміну задачі',
         'email_notify_forum_enabled' => 'Сповіщення про форум',
         'email_notify_reminders_enabled' => 'Нагадування про термін',
         'app_url' => 'Домен застосунку',

@@ -415,6 +415,12 @@ class Task
         // Термін переносять — старі нагадування (2 дні/1 день/настав термін) уже не відповідають
         // новій даті; прибираємо їх, щоб вони мали шанс спрацювати заново для нового терміну.
         $db->prepare('DELETE FROM task_due_reminders WHERE task_id = :id')->execute(['id' => $id]);
+
+        // Перенесення терміну вручну (не автоматичне прибирання/відновлення при зміні статусу) — повідомляємо виконавця й постановника.
+        if ($old['due_date'] !== $dueDate && $reason !== self::REASON_CLEARED && $reason !== self::REASON_RESTORED) {
+            NotificationService::taskDueChanged($id, $old['due_date'] ?: null, $dueDate, $actingUserId, $reason);
+            \App\Services\TaskRuleService::apply($id, 'due');
+        }
     }
 
     /** @return array<int, array<string, mixed>> історія змін дат, нові зверху */
@@ -613,6 +619,7 @@ class Task
             $id = (int) $db->lastInsertId();
             self::recalcHours($taskId);
             $db->commit();
+            \App\Services\TaskRuleService::apply($taskId, 'comment');
             return $id;
         } catch (\Throwable $e) {
             $db->rollBack();

@@ -59,6 +59,7 @@ $router->get('/support/kb', [$support, 'kbIndex']);
 $router->get('/support/kb/suggest', [$support, 'kbSuggest']);
 $router->get('/support/kb/files/{id}', [$support, 'kbFile']);
 $router->get('/support/kb/{slug}', [$support, 'kbShow']);
+$router->post('/support/kb/{slug}/feedback', [$support, 'kbFeedback']);
 $router->get('/support/track/{token}', [$support, 'track']);
 $router->get('/support/track/{token}/attachments/{id}', [$support, 'attachment']);
 $router->post('/support/track/{token}/comment', [$support, 'addComment']);
@@ -156,6 +157,9 @@ $router->post('/tasks/{id}/save-template', fn($p) => $templates->saveFromTask($p
 $router->post('/tasks/{id}/subtasks', fn($p) => $tasks->storeSubtask($p));
 $router->post('/tasks/{id}/detach', fn($p) => $tasks->detachSubtask($p));
 $router->post('/tasks/{id}/checklist', fn($p) => $tasks->addChecklist($p));
+$router->post('/tasks/{id}/labels', fn($p) => $tasks->setLabels($p));
+$router->post('/tasks/{id}/checklist/done/hide', fn($p) => $tasks->hideDoneChecklist($p));
+$router->post('/tasks/{id}/checklist/hidden/show', fn($p) => $tasks->showHiddenChecklist($p));
 $router->post('/tasks/{id}/checklist/{item}/toggle', fn($p) => $tasks->toggleChecklist($p));
 $router->post('/tasks/{id}/checklist/{item}/delete', fn($p) => $tasks->deleteChecklist($p));
 
@@ -169,6 +173,7 @@ $router->get('/tickets/{id}', fn($p) => $tickets->show($p));
 
 // --- Архів (закриті тікети/задачі/проєкти) ---
 $router->get('/notifications', fn() => (new \App\Controllers\NotificationController())->index());
+$router->post('/notifications/prefs', fn() => (new \App\Controllers\NotificationController())->savePrefs());
 $router->post('/notifications/read-all', fn() => (new \App\Controllers\NotificationController())->readAll());
 $router->post('/notifications/clear', fn() => (new \App\Controllers\NotificationController())->clearRead());
 $router->get('/notifications/{id}/open', fn($p) => (new \App\Controllers\NotificationController())->open($p));
@@ -199,6 +204,9 @@ $router->post('/tickets/{id}/links', fn($p) => $tickets->addLink($p));
 $router->post('/tickets/{id}/links/{link}/delete', fn($p) => $tickets->removeLink($p));
 $router->post('/tickets/{id}/time', fn($p) => $tickets->addTime($p));
 $router->post('/tickets/{id}/time/{log}/delete', fn($p) => $tickets->deleteTime($p));
+$router->get('/reply-templates', fn() => (new \App\Controllers\ReplyTemplateController())->index());
+$router->post('/reply-templates', fn() => (new \App\Controllers\ReplyTemplateController())->save());
+$router->post('/reply-templates/{id}/delete', fn($p) => (new \App\Controllers\ReplyTemplateController())->delete($p));
 $router->post('/tickets/{id}/comments', fn($p) => $tickets->addComment($p));
 $router->post('/tickets/{id}/csat', fn($p) => $tickets->submitCsat($p));
 
@@ -299,6 +307,7 @@ $router->get('/admin/time', function () {
 $router->get('/admin/backup', fn() => (new \App\Controllers\BackupController())->index());
 $router->post('/admin/backup', fn() => (new \App\Controllers\BackupController())->create());
 $router->post('/admin/backup/settings', fn() => (new \App\Controllers\BackupController())->settings());
+$router->post('/admin/backup/reencrypt', fn() => (new \App\Controllers\BackupController())->reencrypt());
 $router->post('/admin/backup/restore', fn() => (new \App\Controllers\BackupController())->restore());
 $router->get('/admin/backup/{stamp}/download', fn($p) => (new \App\Controllers\BackupController())->download($p));
 $router->post('/admin/backup/{stamp}/verify', fn($p) => (new \App\Controllers\BackupController())->verify($p));
@@ -440,11 +449,13 @@ $router->post('/admin/queues/{id}/edit', function ($p) {
 $router->post('/admin/queues/{id}/delete', function ($p) {
     (new AdminController())->deleteQueue($p);
 });
+$router->post('/admin/queues/work-calendar', fn() => (new AdminController())->updateWorkCalendar());
 $router->post('/admin/queues/sla-priority', fn() => (new AdminController())->updateSlaPriority());
 $router->get('/admin/ticket-labels', fn() => (new AdminController())->labels());
 $router->post('/admin/ticket-labels', fn() => (new AdminController())->saveLabel());
 $router->post('/admin/ticket-labels/{id}/delete', fn($p) => (new AdminController())->deleteLabel($p));
 $router->post('/tickets/{id}/labels', fn($p) => $tickets->setLabels($p));
+$router->get('/task-rules', fn() => (new \App\Controllers\TaskRuleController(true))->index());
 $router->get('/admin/task-rules', fn() => (new \App\Controllers\TaskRuleController())->index());
 $router->post('/admin/task-rules', fn() => (new \App\Controllers\TaskRuleController())->save());
 $router->post('/admin/task-rules/{id}/toggle', fn($p) => (new \App\Controllers\TaskRuleController())->toggle($p));

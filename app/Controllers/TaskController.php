@@ -20,7 +20,8 @@ class TaskController
     {
         Auth::requireLogin();
         View::render('tasks/index', [
-            'tasks' => Task::sortForDisplay(Task::allOpenVisibleTo(Auth::id(), Auth::hasRole(['admin']))),
+            'tasks' => $tasks = Task::sortForDisplay(Task::allOpenVisibleTo(Auth::id(), Auth::hasRole(['admin']))),
+            'taskLabels' => \App\Models\TaskLabel::forTasks(array_map(fn($t) => (int) $t['id'], $tasks)),
         ]);
     }
 
@@ -133,6 +134,9 @@ class TaskController
             'dateChanges' => Task::dateChanges((int) $task['id']),
             'projects' => Project::allVisibleTo(Auth::id(), Auth::hasRole(['admin'])),
             'attachments' => \App\Models\Attachment::forOwner('task', (int) $task['id']),
+            'allLabels' => \App\Models\TaskLabel::ready() ? \App\Models\Ticket::labels() : [],
+            'labelsReady' => \App\Models\TaskLabel::ready(),
+            'taskLabels' => \App\Models\TaskLabel::forTask((int) $task['id']),
             'checklistReady' => \App\Models\TaskChecklist::ready(),
             'checklist' => \App\Models\TaskChecklist::ready() ? \App\Models\TaskChecklist::forTask((int) $task['id']) : [],
             'subtasks' => \App\Models\TaskChecklist::ready() ? \App\Models\TaskChecklist::subtasks((int) $task['id']) : [],
@@ -354,16 +358,45 @@ class TaskController
         $this->back($task['id'], null, null, '#checklist');
     }
 
+    /** «Сховати виконані»: пункти лишаються в задачі (і в прогресі), але зникають з основного списку. */
+    public function hideDoneChecklist(array $params): void
+    {
+        Auth::requireLogin();
+        $task = $this->findTaskOrFail((int) $params['id']);
+        $this->requireChecklistReady((int) $task['id']);
+        $n = \App\Models\TaskChecklist::hideDone((int) $task['id']);
+        \App\Models\Audit::log('task', (int) $task['id'], 'checklist_hidden', Auth::id(), ['items' => $n]);
+        $this->back($task['id'], 'success', 'Сховано виконаних пунктів: ' . $n, '#checklist');
+    }
+
+    /** Мітки задачі: заміна набору (словник міток спільний із тікетами). */
+    public function setLabels(array $params): void
+    {
+        Auth::requireLogin();
+        $task = $this->findTaskOrFail((int) $params['id']);
+        if (!\App\Models\TaskLabel::ready()) {
+            $this->back($task['id'], 'error', 'Потрібна міграція 062 (update.sh).');
+        }
+        $valid = array_map(fn($l) => (int) $l['id'], \App\Models\Ticket::labels());
+        \App\Models\TaskLabel::set((int) $task['id'], array_values(array_intersect($valid, array_map('intval', (array) ($_POST['labels'] ?? [])))), (int) Auth::id());
+        $this->back($task['id'], 'success', 'Мітки збережено');
+    }
+
+    public function showHiddenChecklist(array $params): void
+    {
+        Auth::requireLogin();
+        $task = $this->findTaskOrFail((int) $params['id']);
+        $this->requireChecklistReady((int) $task['id']);
+        $n = \App\Models\TaskChecklist::showHidden((int) $task['id']);
+        $this->back($task['id'], 'success', 'Повернуто пунктів: ' . $n, '#checklist');
+    }
+
     public function deleteChecklist(array $params): void
     {
         Auth::requireLogin();
         $task = $this->findTaskOrFail((int) $params['id']);
         $this->requireChecklistReady((int) $task['id']);
 
-        if (($params['item'] ?? '') === 'done') {
-            $n = \App\Models\TaskChecklist::deleteDone((int) $task['id']);
-            $this->back($task['id'], 'success', 'Видалено виконаних пунктів: ' . $n, '#checklist');
-        }
         $item = $this->checklistItemOrFail((int) $params['item'], (int) $task['id']);
         \App\Models\TaskChecklist::delete((int) $item['id']);
         $this->back($task['id'], null, null, '#checklist');

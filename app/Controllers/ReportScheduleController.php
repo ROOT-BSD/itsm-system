@@ -35,6 +35,8 @@ class ReportScheduleController
             'projects' => Project::allVisibleTo($uid, $this->isAdmin()),
             'users' => User::allActive(),
             'categories' => Task::distinctCategoriesVisibleTo($uid, $this->isAdmin()),
+            'queues' => \App\Models\Ticket::queues(),
+            'canTicketsReport' => Auth::hasRole(['admin']) || \App\Core\Access::isUnitAdmin(Auth::role()),
             'mailOn' => MailerService::isConfigured(),
             'lastRun' => \App\Models\Setting::get('reports_last_run'),
             'success' => $_GET['success'] ?? null,
@@ -51,12 +53,22 @@ class ReportScheduleController
         $weekday = (int) ($_POST['weekday'] ?? 1);
         $monthDay = (int) ($_POST['month_day'] ?? 1);
         $hour = (int) ($_POST['send_hour'] ?? 8);
+        $minute = (int) ($_POST['send_minute'] ?? 0);
+        if (preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', trim((string) ($_POST['send_time'] ?? '')), $tm)) {
+            [$hour, $minute] = [(int) $tm[1], (int) $tm[2]];
+        } elseif (isset($_POST['send_time'])) {
+            $this->redirect('error', 'Некоректний час відправки (потрібен формат ГГ:ХХ).', $back);
+        }
+        $rtype = ($_POST['report_type'] ?? '') === 'tickets' ? 'tickets' : 'time';
+        if ($rtype === 'tickets' && !Auth::hasRole(['admin']) && !\App\Core\Access::isUnitAdmin(Auth::role())) {
+            $this->redirect('error', 'Звіт по тікетах доступний лише адміністратору системи й адміністратору підрозділу.', $back);
+        }
         $format = array_key_exists($_POST['format'] ?? '', ReportSchedule::FORMATS) ? $_POST['format'] : 'pdf';
         if ($name === '' || mb_strlen($name) > 150) {
             $this->redirect('error', 'Вкажіть назву розкладу (до 150 символів).', $back);
         }
-        if ($weekday < 1 || $weekday > 7 || $monthDay < 1 || $monthDay > 28 || $hour < 0 || $hour > 23) {
-            $this->redirect('error', 'Некоректний день або година.', $back);
+        if ($weekday < 1 || $weekday > 7 || $monthDay < 1 || $monthDay > 28 || $hour < 0 || $hour > 23 || $minute < 0 || $minute > 59) {
+            $this->redirect('error', 'Некоректний день або час.', $back);
         }
         $projectId = !empty($_POST['project_id']) ? (int) $_POST['project_id'] : null;
         // Проєкт, уже заданий у розкладі, лишається дозволеним (адмін міг редагувати чужий розклад).
@@ -89,8 +101,22 @@ class ReportScheduleController
             $extra[strtolower($e)] = true;
         }
         $category = trim((string) ($_POST['category'] ?? ''));
+        $queueId = $rtype === 'tickets' && !empty($_POST['queue_id']) ? (int) $_POST['queue_id'] : null;
+        if ($queueId !== null && !in_array($queueId, array_map(fn($q) => (int) $q['id'], \App\Models\Ticket::queues()), true)) {
+            $this->redirect('error', 'Чергу не знайдено.', $back);
+        }
+        $operatorId = $rtype === 'tickets' && !empty($_POST['operator_id']) ? (int) $_POST['operator_id'] : null;
+        if ($operatorId !== null && !User::findById($operatorId)) {
+            $this->redirect('error', 'Оператора не знайдено.', $back);
+        }
+        if ($rtype === 'tickets') {
+            // Фільтри обліку часу до звіту по тікетах не застосовуються.
+            $projectId = null;
+            $logUserId = null;
+            $category = '';
+        }
         return [
-            'name' => $name, 'frequency' => $freq, 'weekday' => $weekday, 'month_day' => $monthDay, 'send_hour' => $hour,
+            'name' => $name, 'report_type' => $rtype, 'send_minute' => $minute, 'queue_id' => $queueId, 'operator_id' => $operatorId, 'frequency' => $freq, 'weekday' => $weekday, 'month_day' => $monthDay, 'send_hour' => $hour,
             'format' => $format, 'project_id' => $projectId, 'log_user_id' => $logUserId,
             'category' => $category !== '' ? mb_substr($category, 0, 100) : null, 'extra_recipients' => $extra ? implode(', ', array_keys($extra)) : null,
         ];
@@ -115,6 +141,8 @@ class ReportScheduleController
             'projects' => Project::allVisibleTo($uid, $this->isAdmin()),
             'users' => User::allActive(),
             'categories' => Task::distinctCategoriesVisibleTo($uid, $this->isAdmin()),
+            'queues' => \App\Models\Ticket::queues(),
+            'canTicketsReport' => Auth::hasRole(['admin']) || \App\Core\Access::isUnitAdmin(Auth::role()),
             'error' => $_GET['error'] ?? null,
         ]);
     }
@@ -124,7 +152,7 @@ class ReportScheduleController
         $s = $this->mine((int) ($params['id'] ?? 0));
         $d = $this->parseForm('/reports/schedules/' . (int) $s['id'] . '/edit', $s);
         // Змінено розклад відправки — не наздоганяємо «пропущений» період заднім числом, відлік іде від зараз (як при створенні).
-        $timingChanged = $d['frequency'] !== $s['frequency'] || $d['send_hour'] !== (int) $s['send_hour']
+        $timingChanged = $d['frequency'] !== $s['frequency'] || $d['send_hour'] !== (int) $s['send_hour'] || $d['send_minute'] !== (int) $s['send_minute']
             || ($d['frequency'] === 'weekly' ? $d['weekday'] !== (int) $s['weekday'] : $d['month_day'] !== (int) $s['month_day']);
         ReportSchedule::update((int) $s['id'], $d, $timingChanged);
         Audit::log('report_schedule', (int) $s['id'], 'updated', (int) Auth::id(), ['name' => $d['name'], 'frequency' => $d['frequency'], 'format' => $d['format']]);

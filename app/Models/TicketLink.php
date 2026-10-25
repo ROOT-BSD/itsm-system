@@ -53,6 +53,93 @@ class TicketLink
         return $out;
     }
 
+    /**
+     * Тікети, схожі на цей за темою (можливі дублі): за останні 180 днів, крім самого тікета й уже пов'язаних.
+     * Слова теми ≥ 4 літер (і 3-літерні на кшталт VPN) зводяться до основи, збіг у темі важить 3, в описі — 1; потрібен збіг щонайменше двох балів.
+     * Доступ до тікетів перевіряє викликач.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function similar(array $ticket, int $limit = 5): array
+    {
+        $self = (int) $ticket['id'];
+        $words = [];
+        foreach (preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower((string) $ticket['subject']), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $w) {
+            $len = mb_strlen($w);
+            if ($len >= 4 || ($len === 3 && !in_array($w, ['для', 'що', 'як', 'або', 'але', 'при', 'над', 'під', 'про', 'між', 'без', 'чи', 'нам', 'вам'], true))) {
+                $words[mb_substr($w, 0, $len >= 7 ? $len - 2 : ($len >= 5 ? $len - 1 : $len))] = true;
+            }
+        }
+        $words = array_slice(array_keys($words), 0, 8);
+        if (!$words) {
+            return [];
+        }
+        $like = [];
+        $args = [];
+        foreach ($words as $w) {
+            $like[] = '(t.subject LIKE ? OR t.description LIKE ?)';
+            $pat = '%' . addcslashes($w, '%_\\') . '%';
+            array_push($args, $pat, $pat);
+        }
+        $linked = [$self];
+        if (self::ready()) {
+            $st = Database::connection()->prepare('SELECT IF(ticket_id = ?, linked_id, ticket_id) FROM ticket_links WHERE ticket_id = ? OR linked_id = ?');
+            $st->execute([$self, $self, $self]);
+            $linked = array_merge($linked, array_map('intval', $st->fetchAll(\PDO::FETCH_COLUMN)));
+        }
+        $in = implode(',', array_map('intval', $linked));
+        $stmt = Database::connection()->prepare(
+            'SELECT t.id, t.subject, t.description, t.status, t.created_at, t.requester_user_id, t.assigned_operator_id FROM tickets t
+             WHERE t.id NOT IN (' . $in . ') AND t.created_at >= (NOW() - INTERVAL 180 DAY) AND (' . implode(' OR ', $like) . ')
+             ORDER BY t.id DESC LIMIT 200'
+        );
+        $stmt->execute($args);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $subject = mb_strtolower((string) $row['subject']);
+            $desc = mb_strtolower(mb_substr((string) $row['description'], 0, 3000));
+            $score = 0;
+            foreach ($words as $w) {
+                $score += (mb_strpos($subject, $w) !== false ? 3 : 0) + (mb_strpos($desc, $w) !== false ? 1 : 0);
+            }
+            if ($score >= 2) {
+                unset($row['description']);
+                $row['score'] = $score;
+                $out[] = $row;
+            }
+        }
+        usort($out, static fn(array $a, array $b): int => [$b['score'], $b['id']] <=> [$a['score'], $a['id']]);
+        return $out;
+    }
+
+    /**
+     * Зв'язки для заявника на порталі. Чужі дані не розкриваються: про оригінал-дубль — лише статус, про приєднані дублі — кількість,
+     * про пов'язані — тема й статус тільки тих звернень, що подані з тією самою адресою.
+     *
+     * @return array{original_status: ?string, duplicates: int, related: array<int, array{id: int, subject: string, status: string}>}
+     */
+    public static function forRequester(array $ticket): array
+    {
+        $out = ['original_status' => null, 'duplicates' => 0, 'related' => []];
+        if (!self::ready()) {
+            return $out;
+        }
+        $links = self::forTicket((int) $ticket['id']);
+        if ($links['original']) {
+            $out['original_status'] = (string) $links['original']['status'];
+        }
+        $out['duplicates'] = count($links['duplicates']);
+        $ids = array_map(static fn(array $r): int => (int) $r['id'], $links['related']);
+        if ($ids) {
+            $stmt = Database::connection()->prepare('SELECT id, subject, status FROM tickets WHERE id IN (' . implode(',', $ids) . ') AND requester_email = :e ORDER BY id');
+            $stmt->execute(['e' => $ticket['requester_email']]);
+            foreach ($stmt->fetchAll() as $r) {
+                $out['related'][] = ['id' => (int) $r['id'], 'subject' => (string) $r['subject'], 'status' => (string) $r['status']];
+            }
+        }
+        return $out;
+    }
+
     /** id дублів оригіналу. @return int[] */
     public static function duplicateIds(int $originalId): array
     {

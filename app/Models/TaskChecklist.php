@@ -78,10 +78,18 @@ class TaskChecklist
         Database::connection()->prepare('DELETE FROM task_checklist_items WHERE id = :id')->execute(['id' => $id]);
     }
 
-    /** Видаляє всі виконані пункти задачі; повертає їх кількість. */
-    public static function deleteDone(int $taskId): int
+    /** Ховає виконані пункти задачі з основного списку (пункти зберігаються й рахуються в прогресі); повертає кількість. */
+    public static function hideDone(int $taskId): int
     {
-        $stmt = Database::connection()->prepare('DELETE FROM task_checklist_items WHERE task_id = :t AND is_done = 1');
+        $stmt = Database::connection()->prepare('UPDATE task_checklist_items SET is_hidden = 1 WHERE task_id = :t AND is_done = 1 AND is_hidden = 0');
+        $stmt->execute(['t' => $taskId]);
+        return $stmt->rowCount();
+    }
+
+    /** Повертає сховані пункти в основний список; повертає кількість. */
+    public static function showHidden(int $taskId): int
+    {
+        $stmt = Database::connection()->prepare('UPDATE task_checklist_items SET is_hidden = 0 WHERE task_id = :t AND is_hidden = 1');
         $stmt->execute(['t' => $taskId]);
         return $stmt->rowCount();
     }

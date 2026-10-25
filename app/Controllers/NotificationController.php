@@ -16,6 +16,10 @@ class NotificationController
             'items' => UserNotification::forUser((int) Auth::id()),
             'unread' => UserNotification::unreadCount((int) Auth::id()),
             'ready' => UserNotification::ready(),
+            'categories' => UserNotification::CATEGORIES,
+            'disabled' => UserNotification::disabledCategories((int) Auth::id()),
+            'prefsReady' => UserNotification::prefsReady(),
+            'saved' => !empty($_GET['saved']),
         ]);
     }
 
@@ -32,6 +36,16 @@ class NotificationController
             }
         }
         header('Location: ' . $to);
+        exit;
+    }
+
+    /** Особисті налаштування: які категорії подій надходять у центр (відмічені — отримувати). */
+    public function savePrefs(): void
+    {
+        Auth::requireLogin();
+        $on = array_values(array_intersect(array_keys(UserNotification::CATEGORIES), array_map('strval', (array) ($_POST['categories'] ?? []))));
+        UserNotification::saveEnabledCategories((int) Auth::id(), $on);
+        header('Location: /notifications?saved=1');
         exit;
     }
 

@@ -13,6 +13,56 @@ class UserNotification
     /** Скільки сповіщень зберігаємо на користувача (старіші прочитані видаляються). */
     private const KEEP = 200;
 
+    /** Категорії, які користувач може вимкнути в налаштуваннях (повідомлення від автоматичних правил не вимикаються). */
+    public const CATEGORIES = [
+        'tickets' => 'Тікети — призначення, зміна статусу, нові коментарі',
+        'tasks' => 'Задачі — призначення виконавцем, перенесення терміну',
+        'projects' => 'Проєкти — призначення відповідальним, доступ до проєкту',
+        'forum' => 'Форум — нові теми й відповіді',
+        'reminders' => 'Нагадування про терміни задач',
+    ];
+
+    public static function prefsReady(): bool
+    {
+        static $ready = null;
+        if ($ready === null) {
+            try {
+                Database::connection()->query('SELECT 1 FROM user_notify_prefs LIMIT 1');
+                $ready = true;
+            } catch (\Throwable) {
+                $ready = false;
+            }
+        }
+        return $ready;
+    }
+
+    /** @return string[] вимкнені користувачем категорії */
+    public static function disabledCategories(int $userId): array
+    {
+        if (!self::prefsReady()) {
+            return [];
+        }
+        $stmt = Database::connection()->prepare('SELECT category FROM user_notify_prefs WHERE user_id = :u');
+        $stmt->execute(['u' => $userId]);
+        return array_map('strval', $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /** @param string[] $enabled категорії, які користувач хоче отримувати; решта вимикаються */
+    public static function saveEnabledCategories(int $userId, array $enabled): void
+    {
+        if (!self::prefsReady()) {
+            return;
+        }
+        $db = Database::connection();
+        $db->prepare('DELETE FROM user_notify_prefs WHERE user_id = :u')->execute(['u' => $userId]);
+        $ins = $db->prepare('INSERT INTO user_notify_prefs (user_id, category) VALUES (:u, :c)');
+        foreach (array_keys(self::CATEGORIES) as $c) {
+            if (!in_array($c, $enabled, true)) {
+                $ins->execute(['u' => $userId, 'c' => $c]);
+            }
+        }
+    }
+
     public static function ready(): bool
     {
         static $ready = null;
@@ -27,11 +77,14 @@ class UserNotification
         return $ready;
     }
 
-    /** Додає сповіщення активному користувачу. $url — лише внутрішня адреса (починається з «/»). */
-    public static function notify(int $userId, string $title, ?string $body = null, ?string $url = null): void
+    /** Додає сповіщення активному користувачу. $url — лише внутрішня адреса (починається з «/»). $category — для особистих налаштувань (null — завжди). */
+    public static function notify(int $userId, string $title, ?string $body = null, ?string $url = null, ?string $category = null): void
     {
         if (!self::ready()) {
             return;
+        }
+        if ($category !== null && in_array($category, self::disabledCategories($userId), true)) {
+            return; // користувач вимкнув цю категорію в налаштуваннях центру
         }
         if ($url !== null && !preg_match('#^/[A-Za-z0-9/_\-?=&%.\#]*$#', $url)) {
             $url = null;

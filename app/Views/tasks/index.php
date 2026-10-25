@@ -4,7 +4,10 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h3 class="mb-0">Відкриті задачі</h3>
-    <?php $exportUrl = '/tasks/export'; require __DIR__ . '/../_export_button.php'; ?>
+    <div class="d-flex gap-2">
+        <?php if (\App\Core\Auth::hasRole(['admin', 'unit_admin', 'it_manager'])): ?><a href="<?= \App\Core\Auth::hasRole(['admin']) ? '/admin/task-rules' : '/task-rules' ?>" class="btn btn-outline-secondary">Правила для задач</a><?php endif; ?>
+        <?php $exportUrl = '/tasks/export'; require __DIR__ . '/../_export_button.php'; ?>
+    </div>
 </div>
 
 <table class="table table-bordered table-sm table-compact-rows bg-white align-middle">
@@ -28,7 +31,8 @@
         <tr style="--bs-table-bg: hsl(<?= $hue ?>, 55%, 94%);">
             <td><a href="/tasks/<?= (int)$t['id'] ?>">#<?= (int)$t['id'] ?></a></td>
             <td><?php if (!empty($t['parent_task_id'])): ?><span class="text-muted" title="Підзадача задачі #<?= (int)$t['parent_task_id'] ?>">↳ </span><?php endif; ?><?= \App\Core\View::e($t['title']) ?>
-                <?= \App\Core\View::progress($t) ?></td>
+                <?= \App\Core\View::progress($t) ?>
+                <?php foreach (($taskLabels[(int) $t['id']] ?? []) as $lb): ?><span class="badge text-bg-<?= \App\Core\View::e($lb['color']) ?>"><?= \App\Core\View::e($lb['name']) ?></span> <?php endforeach; ?></td>
             <td><a href="/projects/<?= (int)$t['project_id'] ?>"><?= \App\Core\View::e($t['project_name']) ?></a></td>
             <td><?= \App\Core\View::e($t['assignee_name'] ?? '—') ?></td>
             <td><span class="badge prio-<?= \App\Core\View::e($t['priority']) ?>"><?= \App\Core\View::e($t['priority']) ?></span></td>

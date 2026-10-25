@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS task_checklist_items (
     task_id INT NOT NULL,
     body VARCHAR(255) NOT NULL,
     is_done TINYINT(1) NOT NULL DEFAULT 0,
+    is_hidden TINYINT(1) NOT NULL DEFAULT 0,   -- виконаний пункт сховано з основного списку (міграція 059)
     done_by INT NULL,
     done_at DATETIME NULL,
     created_by INT NULL,
@@ -711,10 +712,14 @@ CREATE TABLE IF NOT EXISTS report_schedules (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     name VARCHAR(150) NOT NULL,
+    report_type ENUM('time','tickets') NOT NULL DEFAULT 'time',   -- тип звіту (міграція 057)
     frequency ENUM('weekly','monthly') NOT NULL DEFAULT 'weekly',
     weekday TINYINT NOT NULL DEFAULT 1,          -- 1 = понеділок … 7 = неділя (для weekly)
     month_day TINYINT NOT NULL DEFAULT 1,        -- 1…28 (для monthly)
     send_hour TINYINT NOT NULL DEFAULT 8,        -- 0…23, не раніше цієї години
+    send_minute TINYINT UNSIGNED NOT NULL DEFAULT 0, -- 0…59 (міграція 057)
+    queue_id INT NULL,                           -- фільтр звіту по тікетах
+    operator_id INT NULL,                        -- фільтр звіту по тікетах
     format ENUM('pdf','xlsx','csv') NOT NULL DEFAULT 'pdf',
     project_id INT NULL,
     log_user_id INT NULL,
@@ -909,7 +914,7 @@ CREATE TABLE IF NOT EXISTS task_rules (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     sort_order INT NOT NULL DEFAULT 100,
-    trigger_event ENUM('created','status') NOT NULL DEFAULT 'created',
+    trigger_event ENUM('created','status','comment','due') NOT NULL DEFAULT 'created',
     when_status_id INT NULL,
     keywords TEXT NULL,
     match_in ENUM('title','description','both') NOT NULL DEFAULT 'both',
@@ -920,12 +925,51 @@ CREATE TABLE IF NOT EXISTS task_rules (
     action_priority ENUM('low','normal','high','critical') NULL,
     notify_system_assignee TINYINT(1) NOT NULL DEFAULT 0,
     notify_system_users VARCHAR(500) NULL,
+    action_label_id INT NULL,                  -- додати мітку (міграція 062)
+    action_comment VARCHAR(1000) NULL,         -- додати запис у журнал робіт (міграція 062)
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     hits INT UNSIGNED NOT NULL DEFAULT 0,
     last_hit_at DATETIME NULL,
     created_by INT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     KEY idx_task_rules_active (is_active, trigger_event, sort_order)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS reply_templates (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    owner_id INT NULL,
+    name VARCHAR(100) NOT NULL,
+    body TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_reply_templates_owner (owner_id),
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS kb_feedback (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    page_id INT NOT NULL,
+    helpful TINYINT(1) NOT NULL,
+    source VARCHAR(10) NOT NULL DEFAULT 'page',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_kb_feedback_page (page_id),
+    FOREIGN KEY (page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS user_notify_prefs (
+    user_id INT NOT NULL,
+    category VARCHAR(20) NOT NULL,
+    PRIMARY KEY (user_id, category),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS task_label_links (
+    task_id INT NOT NULL,
+    label_id INT NOT NULL,
+    PRIMARY KEY (task_id, label_id),
+    KEY idx_tasklab_label (label_id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (label_id) REFERENCES ticket_labels(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 INSERT IGNORE INTO schema_migrations (version, name, applied_via) VALUES
@@ -984,4 +1028,10 @@ INSERT IGNORE INTO schema_migrations (version, name, applied_via) VALUES
 ('053', 'asset_license_seats', 'baseline'),
 ('054', 'ticket_rules_events_priority_notifications', 'baseline'),
 ('055', 'labels_task_rules_sla_priority', 'baseline'),
-('056', 'template_item_roles', 'baseline');
+('056', 'template_item_roles', 'baseline'),
+('057', 'report_schedules_types_minutes', 'baseline'),
+('058', 'reply_templates', 'baseline'),
+('059', 'checklist_hidden', 'baseline'),
+('060', 'kb_feedback', 'baseline'),
+('061', 'task_rule_events_notify_prefs', 'baseline'),
+('062', 'task_labels_rule_actions', 'baseline');

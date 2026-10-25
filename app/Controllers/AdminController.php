@@ -542,6 +542,42 @@ class AdminController
         exit;
     }
 
+    /** Робочий календар SLA: дні тижня, години, свята, робочі дні-перенесення. */
+    public function updateWorkCalendar(): void
+    {
+        $fail = static function (string $m): never {
+            header('Location: /admin/queues?error=' . urlencode($m));
+            exit;
+        };
+        $days = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['days'] ?? [])), static fn($d) => $d >= 1 && $d <= 7)));
+        $start = (string) ($_POST['start'] ?? '');
+        $end = (string) ($_POST['end'] ?? '');
+        $enabled = !empty($_POST['enabled']);
+        if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $start) || !preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $end) || $end <= $start) {
+            $fail('Вкажіть години роботи: початок раніше за кінець (формат ГГ:ХХ).');
+        }
+        if ($enabled && !$days) {
+            $fail('Оберіть хоча б один робочий день тижня.');
+        }
+        [$holidays, $bad] = \App\Services\WorkCalendar::parseDates((string) ($_POST['holidays'] ?? ''));
+        if ($bad !== null) {
+            $fail('Свята: не розпізнано «' . $bad . '». Формати: ДД.ММ (щороку) або ДД.ММ.РРРР.');
+        }
+        [$workdays, $bad] = \App\Services\WorkCalendar::parseDates((string) ($_POST['workdays'] ?? ''), false);
+        if ($bad !== null) {
+            $fail('Робочі дні-перенесення: не розпізнано «' . $bad . '». Формат: ДД.ММ.РРРР.');
+        }
+        if (count($holidays) > 400 || count($workdays) > 400) {
+            $fail('Забагато дат у списку (не більше 400).');
+        }
+        $cfg = ['enabled' => $enabled, 'days' => $days, 'start' => $start, 'end' => $end, 'holidays' => $holidays, 'workdays' => $workdays];
+        \App\Models\Setting::set('work_calendar', json_encode($cfg, JSON_UNESCAPED_UNICODE));
+        \App\Services\WorkCalendar::reset();
+        Audit::log('settings', 0, 'work_calendar_updated', Auth::id(), ['enabled' => $enabled ? 'так' : 'ні', 'days' => implode(',', $days), 'hours' => $start . '–' . $end, 'holidays' => count($holidays), 'workdays' => count($workdays)]);
+        header('Location: /admin/queues?success=' . urlencode($enabled ? 'Робочий календар SLA збережено й увімкнено' : 'Робочий календар збережено (вимкнений — SLA рахується цілодобово)'));
+        exit;
+    }
+
     public function labels(): void
     {
         View::render('admin/ticket_labels', [

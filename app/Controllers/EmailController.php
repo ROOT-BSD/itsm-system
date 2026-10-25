@@ -56,6 +56,7 @@ class EmailController
             'notifyTicketsEnabled' => Setting::get('email_notify_tickets_enabled', '0') === '1',
             'notifyProjectsEnabled' => Setting::get('email_notify_projects_enabled', '0') === '1',
             'notifyTasksEnabled' => Setting::get('email_notify_tasks_enabled', '0') === '1',
+            'notifyDueChangeEnabled' => Setting::get('email_notify_task_due_change', '0') === '1',
             'notifyForumEnabled' => Setting::get('email_notify_forum_enabled', '0') === '1',
             'notifyRemindersEnabled' => Setting::get('email_notify_reminders_enabled', '0') === '1',
             'remindersScriptPath' => dirname(__DIR__, 2) . '/bin/send-reminders.php',
@@ -101,6 +102,7 @@ class EmailController
         $notifyTickets = !empty($_POST['notify_tickets_enabled']);
         $notifyProjects = !empty($_POST['notify_projects_enabled']);
         $notifyTasks = !empty($_POST['notify_tasks_enabled']);
+        $notifyDueChange = !empty($_POST['notify_task_due_change']);
         $notifyForum = !empty($_POST['notify_forum_enabled']);
         $notifyReminders = !empty($_POST['notify_reminders_enabled']);
         $notifyStatus = !empty($_POST['notify_status_enabled']);
@@ -112,7 +114,7 @@ class EmailController
         // Не даємо ввімкнути автовідповідь/сповіщення без налаштованого SMTP — інакше кожна дія
         // (коментар, зміна статусу тощо) мовчки «намагалась» би надіслати лист і щоразу писала
         // б помилку в журнал аудиту.
-        $anyNotification = $autoreplyEnabled || $notifyTickets || $notifyProjects || $notifyTasks || $notifyForum || $notifyReminders || $notifyStatus;
+        $anyNotification = $autoreplyEnabled || $notifyTickets || $notifyProjects || $notifyTasks || $notifyDueChange || $notifyForum || $notifyReminders || $notifyStatus;
         if ($anyNotification && !MailerService::isConfigured()) {
             $this->redirect('error', 'Спершу налаштуйте надсилання пошти (SMTP) — заповніть MAIL_SMTP_* у .env.');
         }
@@ -122,6 +124,7 @@ class EmailController
         Setting::set('email_notify_tickets_enabled', $notifyTickets ? '1' : '0');
         Setting::set('email_notify_projects_enabled', $notifyProjects ? '1' : '0');
         Setting::set('email_notify_tasks_enabled', $notifyTasks ? '1' : '0');
+        Setting::set('email_notify_task_due_change', $notifyDueChange ? '1' : '0');
         Setting::set('email_notify_forum_enabled', $notifyForum ? '1' : '0');
         Setting::set('email_notify_reminders_enabled', $notifyReminders ? '1' : '0');
         Setting::set('email_notify_status_enabled', $notifyStatus ? '1' : '0');
@@ -132,6 +135,7 @@ class EmailController
             'email_notify_tickets_enabled' => $notifyTickets ? 'так' : 'ні',
             'email_notify_projects_enabled' => $notifyProjects ? 'так' : 'ні',
             'email_notify_tasks_enabled' => $notifyTasks ? 'так' : 'ні',
+            'email_notify_task_due_change' => $notifyDueChange ? 'так' : 'ні',
             'email_notify_forum_enabled' => $notifyForum ? 'так' : 'ні',
             'email_notify_reminders_enabled' => $notifyReminders ? 'так' : 'ні',
             'email_notify_status_enabled' => $notifyStatus ? 'так' : 'ні',

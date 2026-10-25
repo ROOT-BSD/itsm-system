@@ -26,7 +26,8 @@
             <div class="alert alert-light border py-2 mb-2 small">
                 <strong>📚 База знань — схожі статті:</strong>
                 <?php foreach ($kbSuggestions as $kb): ?>
-                    <a href="/wiki/<?= \App\Core\View::e($kb['slug']) ?>" target="_blank" rel="noopener" class="ms-2"><?= \App\Core\View::e($kb['title']) ?></a>
+                    <span class="ms-2 text-nowrap"><a href="/wiki/<?= \App\Core\View::e($kb['slug']) ?>" target="_blank" rel="noopener"><?= \App\Core\View::e($kb['title']) ?></a><?php if (($kb['visibility'] ?? '') === 'portal'): ?>
+                        <button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline" data-kb-insert="<?= \App\Core\View::e($kb['title'] . ': ' . \App\Models\Setting::appUrl() . '/support/kb/' . $kb['slug']) ?>" title="Вставити посилання на статтю у відповідь заявнику">↪ у відповідь</button><?php endif; ?></span>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
@@ -149,6 +150,26 @@ $renderLink = function (array $row, ?string $note = null) use ($ticket, $canLink
             <li class="list-group-item text-muted small">Ще пов'язаних тікетів, до яких немає доступу: <?= (int)$links['hidden'] ?></li>
         <?php endif; ?>
     </ul>
+    <?php endif; ?>
+    <?php if ($canLink && !empty($similarTickets)): ?>
+    <div class="card-body border-top pb-2">
+        <div class="small fw-semibold mb-1">🔍 Схожі тікети — можливі дублі (за темою, останні 180 днів)</div>
+        <ul class="list-unstyled mb-0 small">
+            <?php foreach ($similarTickets as $sim): ?>
+                <li class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                    <a href="/tickets/<?= (int) $sim['id'] ?>">#<?= (int) $sim['id'] ?> <?= \App\Core\View::e($sim['subject']) ?></a>
+                    <span class="badge bg-secondary"><?= \App\Core\View::e(\App\Models\Ticket::statusLabel((string) $sim['status'])) ?></span>
+                    <form method="post" action="/tickets/<?= (int)$ticket['id'] ?>/links" class="ms-auto d-flex gap-1">
+                        <?= \App\Core\Csrf::field() ?>
+                        <input type="hidden" name="other_id" value="<?= (int) $sim['id'] ?>">
+                        <button class="btn btn-sm btn-outline-secondary py-0" type="submit" name="kind" value="duplicate_of" title="Цей тікет — дубль тікета №<?= (int) $sim['id'] ?>">це дубль його</button>
+                        <button class="btn btn-sm btn-outline-secondary py-0" type="submit" name="kind" value="has_duplicate" title="Тікет №<?= (int) $sim['id'] ?> — дубль цього">він — дубль цього</button>
+                        <button class="btn btn-sm btn-outline-secondary py-0" type="submit" name="kind" value="related">пов'язаний</button>
+                    </form>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
     <?php endif; ?>
     <?php if ($canLink): ?>
     <div class="card-body">
@@ -277,7 +298,18 @@ require __DIR__ . '/../attachments/_panel.php';
     <div class="card-body">
         <form method="post" action="/tickets/<?= (int)$ticket['id'] ?>/comments">
     <?= \App\Core\Csrf::field() ?>
-            <textarea name="body" class="form-control mb-2" rows="2" placeholder="Написати відповідь..." required></textarea>
+            <?php if (\App\Core\Access::canAssignTicketOperator(\App\Core\Auth::role())): ?>
+            <div class="d-flex gap-2 align-items-center mb-2">
+                <?php if (!empty($replyTemplates)): ?><select class="form-select form-select-sm w-auto" id="reply-template-select" data-target="reply-body" aria-label="Готова відповідь">
+                    <option value="">Готова відповідь…</option>
+                    <?php foreach ($replyTemplates as $rt): ?><option value="<?= (int) $rt['id'] ?>" data-body="<?= \App\Core\View::e($rt['body']) ?>"><?= \App\Core\View::e($rt['name']) ?><?= $rt['owner_id'] === null ? '' : ' (мій)' ?></option><?php endforeach; ?>
+                </select><?php endif; ?>
+                <a href="/reply-templates" class="small"><?= empty($replyTemplates) ? 'Створити готові відповіді' : 'Керувати' ?></a>
+            </div>
+            <script src="<?= \App\Core\View::e(\App\Core\View::asset('/assets/js/reply-templates.js')) ?>" defer></script>
+            <?php endif; ?>
+            <script src="<?= \App\Core\View::e(\App\Core\View::asset('/assets/js/kb-insert.js')) ?>" defer></script>
+            <textarea name="body" id="reply-body" class="form-control mb-2" rows="2" placeholder="Написати відповідь..." required></textarea>
             <div class="d-flex flex-wrap gap-3 align-items-center">
                 <button class="btn btn-sm btn-primary" type="submit">Надіслати</button>
                 <?php if (!empty($canLogTime)): ?>

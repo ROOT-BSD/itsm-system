@@ -16,6 +16,21 @@
 <div class="card mb-4">
     <div class="card-body">
         <h3><?= \App\Core\View::e($task['title']) ?> <small class="text-muted">#<?= (int)$task['id'] ?></small></h3>
+        <?php if (!empty($allLabels)): $__have = array_map('intval', array_column($taskLabels ?? [], 'id')); ?>
+        <form method="post" action="/tasks/<?= (int)$task['id'] ?>/labels" class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <?= \App\Core\Csrf::field() ?>
+            <span class="small text-muted">Мітки:</span>
+            <?php foreach ($allLabels as $lb): ?>
+                <label class="form-check-label"><input class="form-check-input" type="checkbox" name="labels[]" value="<?= (int) $lb['id'] ?>" <?= in_array((int) $lb['id'], $__have, true) ? 'checked' : '' ?>>
+                    <span class="badge text-bg-<?= \App\Core\View::e($lb['color']) ?>"><?= \App\Core\View::e($lb['name']) ?></span></label>
+            <?php endforeach; ?>
+            <button class="btn btn-sm btn-outline-primary py-0" type="submit">Зберегти</button>
+        </form>
+        <?php elseif (!empty($labelsReady) && empty($taskLabels)): ?>
+        <p class="small text-muted mb-2">Мітки: у словнику ще немає жодної<?php if (\App\Core\Auth::hasRole(['admin'])): ?> — <a href="/admin/ticket-labels">створити мітки</a> (вони спільні для тікетів і задач)<?php endif; ?>.</p>
+        <?php elseif (!empty($taskLabels)): ?>
+        <p class="small mb-2"><?php foreach ($taskLabels as $lb): ?><span class="badge text-bg-<?= \App\Core\View::e($lb['color']) ?>"><?= \App\Core\View::e($lb['name']) ?></span> <?php endforeach; ?></p>
+        <?php endif; ?>
         <details class="mb-3">
             <summary class="text-muted small">✏️ Змінити назву</summary>
             <form method="post" action="/tasks/<?= (int)$task['id'] ?>/title" class="d-flex gap-2 mt-2">
@@ -187,6 +202,9 @@
 <?php
 $clTotal = count($checklist);
 $clDone = count(array_filter($checklist, fn($i) => (int)$i['is_done'] === 1));
+$clVisible = array_values(array_filter($checklist, fn($i) => empty($i['is_hidden'])));
+$clHidden = array_values(array_filter($checklist, fn($i) => !empty($i['is_hidden'])));
+$clDoneVisible = count(array_filter($clVisible, fn($i) => (int)$i['is_done'] === 1));
 $clPct = $clTotal > 0 ? (int) round($clDone / $clTotal * 100) : 0;
 $stTotal = count($subtasks);
 $stDone = count(array_filter($subtasks, fn($s) => (int)$s['is_closed'] === 1));
@@ -196,10 +214,10 @@ $stPct = $stTotal > 0 ? (int) round($stDone / $stTotal * 100) : 0;
 <div class="card mb-4" id="checklist">
     <div class="card-header d-flex justify-content-between align-items-center">
         <span>Чек-лист<?= $clTotal ? ' (' . $clDone . '/' . $clTotal . ')' : '' ?></span>
-        <?php if ($clDone > 0): ?>
-            <form method="post" action="/tasks/<?= (int)$task['id'] ?>/checklist/done/delete" class="mb-0" data-confirm="Видалити всі виконані пункти чек-листа?">
+        <?php if ($clDoneVisible > 0): ?>
+            <form method="post" action="/tasks/<?= (int)$task['id'] ?>/checklist/done/hide" class="mb-0">
                 <?= \App\Core\Csrf::field() ?>
-                <button class="btn btn-sm btn-link text-muted p-0" type="submit">прибрати виконані</button>
+                <button class="btn btn-sm btn-link text-muted p-0" type="submit" title="Виконані пункти зникнуть зі списку, але лишаться в задачі">сховати виконані</button>
             </form>
         <?php endif; ?>
     </div>
@@ -209,7 +227,7 @@ $stPct = $stTotal > 0 ? (int) round($stDone / $stTotal * 100) : 0;
                 <div class="progress-bar bg-success" style="width:<?= $clPct ?>%"></div>
             </div>
             <ul class="list-unstyled mb-3">
-                <?php foreach ($checklist as $item): $done = (int)$item['is_done'] === 1; ?>
+                <?php foreach ($clVisible as $item): $done = (int)$item['is_done'] === 1; ?>
                     <li class="d-flex align-items-start gap-2 mb-1">
                         <form method="post" action="/tasks/<?= (int)$task['id'] ?>/checklist/<?= (int)$item['id'] ?>/toggle" class="mb-0">
                             <?= \App\Core\Csrf::field() ?>
@@ -227,6 +245,22 @@ $stPct = $stTotal > 0 ? (int) round($stDone / $stTotal * 100) : 0;
                     </li>
                 <?php endforeach; ?>
             </ul>
+            <?php if (!$clVisible): ?><p class="text-muted small mb-2">Усі пункти виконано й сховано.</p><?php endif; ?>
+            <?php if ($clHidden): ?>
+            <details class="mb-3">
+                <summary class="text-muted small">Сховані виконані пункти (<?= count($clHidden) ?>)</summary>
+                <ul class="list-unstyled small mt-2 mb-2">
+                    <?php foreach ($clHidden as $item): ?>
+                        <li class="text-muted text-decoration-line-through"><?= \App\Core\View::e($item['body']) ?>
+                            <?php if (!empty($item['done_by_name'])): ?><span class="text-decoration-none">— <?= \App\Core\View::e($item['done_by_name']) ?>, <?= \App\Core\View::e(date('d.m.Y H:i', strtotime($item['done_at']))) ?></span><?php endif; ?></li>
+                    <?php endforeach; ?>
+                </ul>
+                <form method="post" action="/tasks/<?= (int)$task['id'] ?>/checklist/hidden/show" class="mb-0">
+                    <?= \App\Core\Csrf::field() ?>
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">Показати у списку</button>
+                </form>
+            </details>
+            <?php endif; ?>
         <?php else: ?>
             <p class="text-muted">Пунктів ще немає. Чек-лист — перелік кроків, які треба зробити в межах цієї задачі.</p>
         <?php endif; ?>

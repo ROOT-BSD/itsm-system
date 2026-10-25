@@ -72,6 +72,31 @@ $isFinished = in_array($ticket['status'], ['resolved', 'closed'], true);
             </div>
         <?php endif; ?>
 
+        <?php if (!empty($ticketLinks['original_status']) || !empty($ticketLinks['duplicates']) || !empty($ticketLinks['related'])): ?>
+            <div class="alert alert-secondary small py-2">
+                <?php if (!empty($ticketLinks['original_status'])): ?>
+                    <div>🔗 Ваше звернення збігається з іншим, яке вже опрацьовується (статус основного: <strong><?= \App\Core\View::e(\App\Models\Ticket::statusLabel($ticketLinks['original_status'])) ?></strong>). Відповіді по ньому стосуються й вас.</div>
+                <?php endif; ?>
+                <?php if (!empty($ticketLinks['duplicates'])): ?>
+                    <div>🔗 До цього звернення приєднано повторних звернень: <?= (int) $ticketLinks['duplicates'] ?>.</div>
+                <?php endif; ?>
+                <?php foreach ($ticketLinks['related'] as $rel): ?>
+                    <div>🔗 Пов'язане ваше звернення №<?= (int) $rel['id'] ?>: «<?= \App\Core\View::e($rel['subject']) ?>» — <?= \App\Core\View::e(\App\Models\Ticket::statusLabel($rel['status'])) ?></div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($kbSuggestions)): ?>
+            <div class="alert alert-info small py-2">
+                <strong>📚 Можливо, допоможуть статті бази знань:</strong>
+                <ul class="mb-0 ps-3">
+                    <?php foreach ($kbSuggestions as $kb): ?>
+                        <li><a href="/support/kb/<?= \App\Core\View::e($kb['slug']) ?>" target="_blank" rel="noopener"><?= \App\Core\View::e($kb['title']) ?></a></li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        <?php endif; ?>
+
         <div class="card mb-4">
             <div class="card-header">Листування</div>
             <ul class="list-group list-group-flush">

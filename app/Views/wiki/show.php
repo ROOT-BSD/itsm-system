@@ -45,6 +45,10 @@
             <?php endif; ?>
         </div>
 
+        <?php if ($page['visibility'] === \App\Models\WikiPage::PORTAL && \App\Models\KbFeedback::ready()): $fb = \App\Models\KbFeedback::forPage((int) $page['id']); ?>
+            <div class="small text-muted mb-3">База знань: 👍 <?= (int) $fb['yes'] ?> · 👎 <?= (int) $fb['no'] ?><?= $fb['deflected'] > 0 ? ' · з підказки на формі допомогло ' . (int) $fb['deflected'] . ' разів (ймовірно, зайвих звернень)' : '' ?> · <a href="/support/kb/<?= $e($page['slug']) ?>" target="_blank" rel="noopener">публічна сторінка</a></div>
+        <?php endif; ?>
+
         <?php if (count($toc) >= 3): ?>
             <details class="wiki-toc card card-body mb-3"<?= count($toc) <= 12 ? ' open' : '' ?>>
                 <summary class="fw-semibold">Зміст (<?= count($toc) ?>)</summary>

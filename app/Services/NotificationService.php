@@ -47,6 +47,21 @@ class NotificationService
         return Setting::get('email_notify_reminders_enabled', '0') === '1' && MailerService::isConfigured();
     }
 
+    /**
+     * Сповіщення в застосунку (центр сповіщень 🔔). Не залежить від перемикачів листів і налаштування SMTP: лист — окремий канал,
+     * який лишається як був. Помилки не критичні.
+     */
+    private static function center(?int $userId, string $title, string $body, string $url, ?string $category = null): void
+    {
+        if (!$userId) {
+            return;
+        }
+        try {
+            \App\Models\UserNotification::notify($userId, $title, $body, $url, $category);
+        } catch (\Throwable) {
+        }
+    }
+
     // ---------- Тікети ----------
 
     /**
@@ -55,8 +70,9 @@ class NotificationService
      * Спрацьовує однаково для коментаря через веб-інтерфейс і через
      * email-to-ticket (обидва шляхи ведуть через Ticket::addComment()).
      */
-    public static function ticketCommentAdded(int $ticketId, string $authorType, ?int $authorId): void
+    public static function ticketCommentAdded(int $ticketId, string $authorType, ?int $authorId, string $commentBody = ''): void
     {
+        self::centerTicketComment($ticketId, $authorType, $authorId);
         if (!self::ticketsEnabled()) {
             return;
         }
@@ -66,6 +82,7 @@ class NotificationService
                 return;
             }
 
+            $quote = self::commentExcerpt($commentBody);
             if ($authorType === 'operator') {
                 if ((int) $ticket['requester_user_id'] === (int) $authorId) {
                     return; // оператор і заявник — та сама людина (рідкісний випадок) — не сповіщаємо саму себе
@@ -76,7 +93,7 @@ class NotificationService
                     !empty($ticket['requester_user_id']),
                     $ticket,
                     "Нова відповідь у зверненні «{$ticket['subject']}» [#{$ticketId}]",
-                    'Оператор залишив нове повідомлення у вашому зверненні.'
+                    'Оператор залишив нове повідомлення у вашому зверненні.' . $quote
                 );
             } else {
                 $operatorId = $ticket['assigned_operator_id'] ?? null;
@@ -93,7 +110,7 @@ class NotificationService
                     true,
                     $ticket,
                     "Нова відповідь заявника у зверненні «{$ticket['subject']}» [#{$ticketId}]",
-                    'Заявник залишив нове повідомлення у зверненні, яке на вас призначене.'
+                    'Заявник залишив нове повідомлення у зверненні, яке на вас призначене.' . $quote
                 );
             }
         } catch (\Throwable) {
@@ -101,9 +118,37 @@ class NotificationService
         }
     }
 
+    /** Центр сповіщень: коментар працівника — заявнику й виконавцю, коментар заявника — виконавцю (автору не надсилається). */
+    private static function centerTicketComment(int $ticketId, string $authorType, ?int $authorId): void
+    {
+        try {
+            $t = Ticket::find($ticketId);
+            if (!$t) {
+                return;
+            }
+            $targets = $authorType === 'requester' ? [$t['assigned_operator_id'] ?? null] : [$t['requester_user_id'] ?? null, $t['assigned_operator_id'] ?? null];
+            foreach (array_unique(array_map('intval', array_filter($targets))) as $uid) {
+                if ($uid !== (int) $authorId) {
+                    self::center($uid, 'Новий коментар у тікеті №' . $ticketId, (string) $t['subject'], '/tickets/' . $ticketId, 'tickets');
+                }
+            }
+        } catch (\Throwable) {
+        }
+    }
+
     /** Зміна статусу тікета — сповіщаємо і заявника, і призначеного оператора, окрім того, хто саме її зробив. */
     public static function ticketStatusChanged(int $ticketId, string $newStatus, int $actingUserId): void
     {
+        try {
+            if ($t = Ticket::find($ticketId)) {
+                foreach (array_unique(array_map('intval', array_filter([$t['requester_user_id'] ?? null, $t['assigned_operator_id'] ?? null]))) as $uid) {
+                    if ($uid !== $actingUserId) {
+                        self::center($uid, 'Тікет №' . $ticketId . ': статус «' . Ticket::statusLabel($newStatus) . '»', (string) $t['subject'], '/tickets/' . $ticketId, 'tickets');
+                    }
+                }
+            }
+        } catch (\Throwable) {
+        }
         if (!self::ticketsEnabled()) {
             return;
         }
@@ -132,6 +177,20 @@ class NotificationService
         }
     }
 
+    /** Текст коментаря для листа: без розмітки, не довший за 3000 символів; порожній — якщо тексту немає (лише зображення). */
+    private static function commentExcerpt(string $body): string
+    {
+        $text = trim(\App\Core\Markdown::plainText($body));
+        $text = trim((string) preg_replace("/\n{3,}/", "\n\n", str_replace("\r", '', $text)));
+        if ($text === '') {
+            return '';
+        }
+        if (mb_strlen($text) > 3000) {
+            $text = rtrim(mb_substr($text, 0, 3000)) . '…';
+        }
+        return "\n\n— — —\n" . $text . "\n— — —";
+    }
+
     private static function sendTicketMail(string $email, string $name, bool $hasAccount, array $ticket, string $subject, string $intro): void
     {
         $link = Setting::appUrl() . ($hasAccount ? '/tickets/' . $ticket['id'] : '/support/track/' . $ticket['access_token']);
@@ -147,6 +206,30 @@ class NotificationService
     /** Скільки адресатів сповіщаємо про одну відповідь: SMTP-надсилання синхронне, довга розсилка гальмувала б запит автора. */
     private const FORUM_MAX_RECIPIENTS = 20;
 
+    /** Центр сповіщень для форуму: ті самі адресати й правила видимості, що й для листів (без ліміту розсилки; до 200 осіб). */
+    private static function centerForum(int $topicId, int $authorId, bool $newTopic): void
+    {
+        try {
+            $topic = \App\Models\Forum::findTopic($topicId);
+            if (!$topic) {
+                return;
+            }
+            $users = $newTopic ? \App\Models\Forum::boardSubscribers((int) $topic['board_id'], $authorId) : \App\Models\Forum::participants($topicId, $authorId);
+            $n = 0;
+            foreach ($users as $u) {
+                if (!in_array($topic['board_visibility'], \App\Models\Forum::allowedVisibilities($u['role_code']), true)) {
+                    continue;
+                }
+                if (++$n > 200) {
+                    break;
+                }
+                self::center((int) $u['id'], $newTopic ? 'Нова тема на форумі: ' . $topic['title'] : 'Нова відповідь на форумі: ' . $topic['title'],
+                    'Розділ «' . $topic['board_name'] . '»', '/forum/topics/' . $topicId, 'forum');
+            }
+        } catch (\Throwable) {
+        }
+    }
+
     /**
      * Нова відповідь у темі форуму — сповіщаємо автора теми й усіх, хто в ній писав, крім того, хто відповів. Лист отримує
      * лише той, хто за своєю роллю бачить розділ теми (тема могла бути перенесена в закритий розділ), тож текст відповіді
@@ -154,6 +237,7 @@ class NotificationService
      */
     public static function forumReplyAdded(int $topicId, int $postId, int $authorId): void
     {
+        self::centerForum($topicId, $authorId, false);
         if (!self::forumEnabled()) {
             return;
         }
@@ -207,6 +291,7 @@ class NotificationService
      */
     public static function forumTopicCreated(int $topicId, int $authorId): void
     {
+        self::centerForum($topicId, $authorId, true);
         if (!self::forumEnabled()) {
             return;
         }
@@ -257,6 +342,9 @@ class NotificationService
     /** Проєкт створено з одразу вказаним відповідальним — окреме сповіщення про призначення (нижче) при створенні не дублюється. */
     public static function projectCreated(int $projectId, ?int $responsibleUserId, int $createdBy): void
     {
+        if ($responsibleUserId && $responsibleUserId !== $createdBy) {
+            self::centerProject($projectId, $responsibleUserId, 'Вас призначено відповідальним за проєкт');
+        }
         if (!self::projectsEnabled() || !$responsibleUserId || $responsibleUserId === $createdBy) {
             return;
         }
@@ -267,6 +355,9 @@ class NotificationService
     /** Користувачу надали доступ до проєкту — лист «Вам надано доступ» (за перемикачем «Сповіщення про проєкти»; без листа самому собі). */
     public static function projectMemberAdded(int $projectId, int $memberUserId, int $actingUserId): void
     {
+        if ($memberUserId !== $actingUserId) {
+            self::centerProject($projectId, $memberUserId, 'Вам надано доступ до проєкту');
+        }
         if (!self::projectsEnabled() || $memberUserId === $actingUserId) {
             return;
         }
@@ -292,10 +383,33 @@ class NotificationService
 
     public static function projectResponsibleChanged(int $projectId, ?int $responsibleUserId, ?int $previousResponsibleUserId, int $actingUserId): void
     {
+        if ($responsibleUserId && $responsibleUserId !== $previousResponsibleUserId && $responsibleUserId !== $actingUserId) {
+            self::centerProject($projectId, $responsibleUserId, 'Вас призначено відповідальним за проєкт');
+        }
         if (!self::projectsEnabled() || !$responsibleUserId || $responsibleUserId === $previousResponsibleUserId || $responsibleUserId === $actingUserId) {
             return;
         }
         self::sendProjectResponsibleMail($projectId, $responsibleUserId, isNew: false);
+    }
+
+    private static function centerProject(int $projectId, int $userId, string $title): void
+    {
+        try {
+            if ($project = \App\Models\Project::find($projectId)) {
+                self::center($userId, $title, '«' . $project['name'] . '»', '/projects/' . $projectId, 'projects');
+            }
+        } catch (\Throwable) {
+        }
+    }
+
+    private static function centerTask(int $taskId, int $userId, string $title): void
+    {
+        try {
+            if ($task = \App\Models\Task::find($taskId)) {
+                self::center($userId, $title, '«' . $task['title'] . '» (проєкт «' . $task['project_name'] . '»)', '/tasks/' . $taskId, 'tasks');
+            }
+        } catch (\Throwable) {
+        }
     }
 
     private static function sendProjectResponsibleMail(int $projectId, int $responsibleUserId, bool $isNew): void
@@ -325,6 +439,9 @@ class NotificationService
     /** Задачу створено з одразу вказаним виконавцем. */
     public static function taskCreated(int $taskId, ?int $assigneeId, int $authorId): void
     {
+        if ($assigneeId && $assigneeId !== $authorId) {
+            self::centerTask($taskId, $assigneeId, 'Вас призначено виконавцем нової задачі');
+        }
         if (!self::tasksEnabled() || !$assigneeId || $assigneeId === $authorId) {
             return;
         }
@@ -334,6 +451,9 @@ class NotificationService
     /** Виконавця задачі змінено — сповіщаємо нового, лише якщо він справді змінився. */
     public static function taskAssigneeChanged(int $taskId, ?int $assigneeId, ?int $previousAssigneeId, int $actingUserId): void
     {
+        if ($assigneeId && $assigneeId !== $previousAssigneeId && $assigneeId !== $actingUserId) {
+            self::centerTask($taskId, $assigneeId, 'Вас призначено виконавцем задачі');
+        }
         if (!self::tasksEnabled() || !$assigneeId || $assigneeId === $previousAssigneeId || $assigneeId === $actingUserId) {
             return;
         }
@@ -363,6 +483,38 @@ class NotificationService
         }
     }
 
+    /** Термін задачі перенесено (вручну): виконавцю й постановнику, крім того, хто переніс. Центр — завжди, лист — за окремим прапорцем. */
+    public static function taskDueChanged(int $taskId, ?string $oldDue, ?string $newDue, int $actingUserId, ?string $reason = null): void
+    {
+        try {
+            $task = \App\Models\Task::find($taskId);
+            if (!$task) {
+                return;
+            }
+            $fmt = static fn(?string $d): string => $d ? date('d.m.Y', strtotime($d)) : 'без терміну';
+            $change = $fmt($oldDue) . ' → ' . $fmt($newDue);
+            $by = User::findById($actingUserId);
+            $mail = self::tasksEnabled() && Setting::get('email_notify_task_due_change', '0') === '1';
+            foreach (array_unique(array_filter([(int) ($task['assignee_id'] ?? 0), (int) ($task['author_id'] ?? 0)])) as $uid) {
+                if ($uid === $actingUserId) {
+                    continue;
+                }
+                self::center($uid, 'Термін задачі перенесено: ' . $change, '«' . $task['title'] . '» (проєкт «' . $task['project_name'] . '»)' . ($reason ? '. Причина: ' . $reason : ''), '/tasks/' . $taskId, 'tasks');
+                $user = $mail ? User::findById($uid) : null;
+                if ($user && $user['is_active']) {
+                    $subject = "Термін задачі «{$task['title']}» перенесено: {$change}";
+                    $text = "Доброго дня, {$user['full_name']}!\n\n" . ($by ? $by['full_name'] . ' переніс(ла)' : 'Перенесено') . " термін задачі «{$task['title']}» (проєкт «{$task['project_name']}»): {$change}."
+                        . ($reason ? "\nПричина: {$reason}" : '') . "\n\nПереглянути задачу:\n" . Setting::appUrl() . '/tasks/' . $taskId . "\n\nЦе автоматичний лист.";
+                    $res = MailerService::send($user['email'], $user['full_name'], $subject, $text);
+                    if (!$res['ok']) {
+                        Audit::log('task', $taskId, 'notification_failed', null, ['to' => $user['email'], 'error' => mb_substr($res['message'], 0, 200)]);
+                    }
+                }
+            }
+        } catch (\Throwable) {
+        }
+    }
+
     // ---------- Нагадування про термін виконання задачі (викликається з cron) ----------
 
     /**
@@ -375,16 +527,17 @@ class NotificationService
      */
     public static function sendDueDateReminders(): array
     {
-        if (!self::remindersEnabled()) {
-            return ['sent' => 0, 'skipped_reason' => 'Сповіщення вимкнені або SMTP не налаштовано'];
-        }
-
+        // Листи — лише за увімкнених сповіщень і налаштованого SMTP; у центр сповіщень нагадування надходять завжди.
+        self::$remindMail = self::remindersEnabled();
         $sent = 0;
         $sent += self::sendRemindersForThreshold('2d', '+2 days', exact: true);
         $sent += self::sendRemindersForThreshold('1d', '+1 day', exact: true);
         $sent += self::sendRemindersForThreshold('due', 'today', exact: false); // exact=false: і сьогодні, і вже прострочені
         return ['sent' => $sent, 'skipped_reason' => null];
     }
+
+    /** Чи надсилати листи-нагадування в поточному запуску (центр сповіщень отримує нагадування незалежно). */
+    private static bool $remindMail = true;
 
     private static function sendRemindersForThreshold(string $type, string $dateExpr, bool $exact): int
     {
@@ -417,10 +570,13 @@ class NotificationService
                     $body = "Доброго дня, {$user['full_name']}!\n\n"
                         . "Термін виконання задачі «{$task['title']}» (проєкт «{$task['project_name']}») — {$task['due_date']} ({$label}).\n\n"
                         . "Переглянути задачу:\n{$link}\n\nЦе автоматичний лист.";
-                    $result = MailerService::send($user['email'], $user['full_name'], $subject, $body);
-                    if (!$result['ok']) {
-                        continue; // не позначаємо як надіслане — спробуємо знову наступного запуску
+                    if (self::$remindMail) {
+                        $result = MailerService::send($user['email'], $user['full_name'], $subject, $body);
+                        if (!$result['ok']) {
+                            continue; // не позначаємо як надіслане — спробуємо знову наступного запуску
+                        }
                     }
+                    self::center((int) $user['id'], 'Нагадування: термін задачі — ' . $label, '«' . $task['title'] . '» (проєкт «' . $task['project_name'] . '»), термін ' . $task['due_date'], '/tasks/' . $task['id'], 'reminders');
                 }
 
                 // Позначаємо оброблено навіть якщо виконавець неактивний — щоб не перевіряти його щоразу.

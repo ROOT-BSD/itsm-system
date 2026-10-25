@@ -50,6 +50,20 @@ $h = static fn(float $b) => \App\Services\BackupService::human($b);
     </div>
 </div>
 
+<?php if (array_filter($backups, static fn($b) => !empty($b['encrypted']))): ?>
+<details class="card card-body shadow-sm mb-4">
+    <summary class="fw-semibold">🔑 Змінити пароль шифрування наявних копій</summary>
+    <p class="small text-muted mt-2">Пароль шифрування задається в <code>.env</code> (<code>BACKUP_PASSWORD</code>) і діє лише на <em>нові</em> копії; старі лишаються зашифрованими тим паролем, яким створені. Тут можна перешифрувати всі наявні зашифровані копії новим паролем. Кожна копія спершу розшифровується старим паролем, шифрується новим і перевіряється, і лише потім замінюється; ті, що не розшифрувалися, не змінюються. <strong>Після цього самі змініть <code>BACKUP_PASSWORD</code> у <code>.env</code> на новий пароль</strong> (система цей файл не редагує). Зберігайте пароль окремо від копій: без нього відновити їх неможливо. Для великих копій операція довга.</p>
+    <form method="post" action="/admin/backup/reencrypt" class="row g-2" autocomplete="off" data-confirm="Перешифрувати всі зашифровані копії новим паролем? Не закривайте сторінку до завершення.">
+        <?= \App\Core\Csrf::field() ?>
+        <div class="col-md-4"><label class="form-label small mb-1">Старий пароль</label><input type="password" name="old_password" class="form-control form-control-sm" autocomplete="off" placeholder="порожньо — з .env"></div>
+        <div class="col-md-4"><label class="form-label small mb-1">Новий пароль (від 12 символів)</label><input type="password" name="new_password" class="form-control form-control-sm" minlength="12" required autocomplete="new-password"></div>
+        <div class="col-md-4"><label class="form-label small mb-1">Повторіть новий пароль</label><input type="password" name="new_password2" class="form-control form-control-sm" minlength="12" required autocomplete="new-password"></div>
+        <div class="col-12"><button type="submit" class="btn btn-sm btn-warning">Перешифрувати копії</button></div>
+    </form>
+</details>
+<?php endif; ?>
+
 <h5>Наявні копії</h5>
 <table class="table table-bordered bg-white align-middle">
     <thead><tr><th>Файл</th><th>Створено</th><th>Розмір</th><th style="width:380px"></th></tr></thead>

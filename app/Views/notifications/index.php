@@ -8,6 +8,21 @@
     </div>
     <?php endif; ?>
 </div>
+<?php if (!empty($saved)): ?><div class="alert alert-success py-2">Налаштування збережено.</div><?php endif; ?>
+<?php if (!empty($prefsReady)): ?>
+<details class="mb-3">
+    <summary class="small text-muted">⚙️ Які сповіщення отримувати</summary>
+    <form method="post" action="/notifications/prefs" class="card card-body mt-2">
+        <?= \App\Core\Csrf::field() ?>
+        <?php foreach ($categories as $k => $label): ?>
+            <div class="form-check"><input class="form-check-input" type="checkbox" name="categories[]" id="nc_<?= $e($k) ?>" value="<?= $e($k) ?>" <?= in_array($k, $disabled, true) ? '' : 'checked' ?>>
+                <label class="form-check-label" for="nc_<?= $e($k) ?>"><?= $e($label) ?></label></div>
+        <?php endforeach; ?>
+        <div class="form-text">Повідомлення від автоматичних правил (налаштованих адміністратором) надходять завжди. Листи на пошту налаштовує адміністратор окремо.</div>
+        <div class="mt-2"><button class="btn btn-sm btn-outline-primary" type="submit">Зберегти</button></div>
+    </form>
+</details>
+<?php endif; ?>
 <?php if (empty($ready)): ?>
     <div class="alert alert-warning">Центр сповіщень ще не налаштовано — виконайте <code>sudo bash update.sh</code> (міграція 054).</div>
 <?php elseif (empty($items)): ?>

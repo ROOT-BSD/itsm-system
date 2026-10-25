@@ -241,6 +241,69 @@ class BackupService
         return $err;
     }
 
+    /**
+     * Перешифрування наявних зашифрованих копій новим паролем (зміна BACKUP_PASSWORD не чіпає старі копії).
+     * Кожна копія: розшифрувати старим → зашифрувати новим у тимчасовий файл → замінити оригінал (файл ніколи не лишається
+     * напівзаписаним). Копії, що не розшифрувалися старим паролем, пропускаються й не змінюються.
+     *
+     * @return array{done: string[], failed: array<string, string>, plain: int}
+     */
+    public static function reencryptAll(string $oldPassword, string $newPassword): array
+    {
+        @set_time_limit(0);
+        $out = ['done' => [], 'failed' => [], 'plain' => 0];
+        $dir = self::dir();
+        $lock = fopen($dir . '/.lock', 'c');
+        if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+            throw new \RuntimeException('Зараз створюється або перешифровується копія — зачекайте.');
+        }
+        try {
+            foreach (self::all() as $b) {
+                if (!$b['encrypted']) {
+                    $out['plain']++;
+                    continue;
+                }
+                $src = $dir . '/' . $b['name'];
+                $mid = $dir . '/.re-' . bin2hex(random_bytes(6)) . '.tar.gz';
+                $dst = $dir . '/.re-' . bin2hex(random_bytes(6)) . '.enc';
+                try {
+                    $err = self::decryptTo($src, $mid, $oldPassword);
+                    if ($err !== null) {
+                        $out['failed'][$b['name']] = $err;
+                        continue;
+                    }
+                    $err = self::openssl(['-in', $mid, '-out', $dst], $newPassword, false);
+                    if ($err !== null || !is_file($dst) || filesize($dst) < 16) {
+                        $out['failed'][$b['name']] = $err ?? 'порожній результат';
+                        continue;
+                    }
+                    // Контрольна розшифровка новим паролем, перш ніж замінити оригінал.
+                    $chk = $dir . '/.re-' . bin2hex(random_bytes(6)) . '.chk';
+                    $err = self::decryptTo($dst, $chk, $newPassword);
+                    $same = $err === null && is_file($chk) && filesize($chk) === filesize($mid);
+                    @unlink($chk);
+                    if (!$same) {
+                        $out['failed'][$b['name']] = $err ?? 'контрольна розшифровка не збіглася';
+                        continue;
+                    }
+                    if (!@rename($dst, $src)) {
+                        $out['failed'][$b['name']] = 'не вдалося замінити файл';
+                        continue;
+                    }
+                    @chmod($src, 0660);
+                    $out['done'][] = $b['name'];
+                } finally {
+                    @unlink($mid);
+                    @unlink($dst);
+                }
+            }
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+        return $out;
+    }
+
     // ---------- відновлення ----------
 
     /** Виконує зовнішню команду; повертає [код, stderr]. */

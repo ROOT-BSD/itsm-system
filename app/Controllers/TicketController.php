@@ -167,9 +167,11 @@ class TicketController
             'success' => $_GET['success'] ?? null,
             'attachments' => \App\Models\Attachment::forOwner('ticket', (int) $ticket['id']),
             'kbSuggestions' => \App\Models\WikiPage::suggest((string) $ticket['subject'] . ' ' . mb_substr((string) $ticket['description'], 0, 500), Auth::role(), 4),
+            'replyTemplates' => \App\Core\Access::canAssignTicketOperator(Auth::role()) ? \App\Models\ReplyTemplate::renderedFor((int) Auth::id(), $ticket) : [],
             'allLabels' => Ticket::labels(),
             'ticketLabels' => Ticket::labelsForTickets([(int) $ticket['id']])[(int) $ticket['id']] ?? [],
             'links' => $this->visibleLinks((int) $ticket['id']),
+            'similarTickets' => $this->similarTickets($ticket),
             'ticketAssets' => $this->visibleAssets((int) $ticket['id']),
             'canLinkAssets' => \App\Core\Access::canUseAssets(Auth::role()) && \App\Models\Asset::ready(),
             'timeLogs' => \App\Models\TicketTimeLog::forTicket((int) $ticket['id']),
@@ -214,6 +216,22 @@ class TicketController
         }
         $links['hidden'] = $hidden;
         return $links;
+    }
+
+    /** Схожі за темою тікети (можливі дублі) — лише для персоналу, що може пов'язувати, і лише ті, до яких є доступ. @return array<int, array<string, mixed>> */
+    private function similarTickets(array $ticket): array
+    {
+        if (!\App\Core\Access::canAssignTicketOperator(Auth::role()) || !\App\Models\TicketLink::ready()) {
+            return [];
+        }
+        try {
+            $isAdmin = Auth::hasRole(['admin']);
+            $canUnassigned = $this->canSeeUnassigned();
+            $rows = array_filter(\App\Models\TicketLink::similar($ticket, 5), static fn(array $r): bool => Ticket::isVisibleTo($r, Auth::id(), $isAdmin, $canUnassigned));
+            return array_slice(array_values($rows), 0, 5);
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     public function assignOperator(array $params): void

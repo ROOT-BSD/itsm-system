@@ -8,6 +8,7 @@ use App\Core\Database;
 class ReportSchedule
 {
     public const WEEKDAYS = [1 => 'понеділок', 2 => 'вівторок', 3 => 'середа', 4 => 'четвер', 5 => 'пʼятниця', 6 => 'субота', 7 => 'неділя'];
+    public const TYPES = ['time' => 'Облік часу', 'tickets' => 'Звіт по тікетах'];
     public const FORMATS = ['pdf' => 'PDF', 'xlsx' => 'Excel (XLSX)', 'csv' => 'CSV'];
 
     public static function ready(): bool
@@ -54,11 +55,11 @@ class ReportSchedule
     public static function create(array $d): int
     {
         $stmt = Database::connection()->prepare(
-            'INSERT INTO report_schedules (user_id, name, frequency, weekday, month_day, send_hour, format, project_id, log_user_id, category, extra_recipients, last_run_at)
-             VALUES (:user_id, :name, :frequency, :weekday, :month_day, :send_hour, :format, :project_id, :log_user_id, :category, :extra, NOW())'
+            'INSERT INTO report_schedules (user_id, name, report_type, frequency, weekday, month_day, send_hour, send_minute, format, project_id, log_user_id, category, queue_id, operator_id, extra_recipients, last_run_at)
+             VALUES (:user_id, :name, :rtype, :frequency, :weekday, :month_day, :send_hour, :send_minute, :format, :project_id, :log_user_id, :category, :queue_id, :operator_id, :extra, NOW())'
         );
         $stmt->execute([
-            'user_id' => $d['user_id'], 'name' => $d['name'], 'frequency' => $d['frequency'], 'weekday' => $d['weekday'],
+            'user_id' => $d['user_id'], 'name' => $d['name'], 'rtype' => $d['report_type'], 'send_minute' => $d['send_minute'], 'queue_id' => $d['queue_id'], 'operator_id' => $d['operator_id'], 'frequency' => $d['frequency'], 'weekday' => $d['weekday'],
             'month_day' => $d['month_day'], 'send_hour' => $d['send_hour'], 'format' => $d['format'],
             'project_id' => $d['project_id'], 'log_user_id' => $d['log_user_id'], 'category' => $d['category'], 'extra' => $d['extra_recipients'],
         ]);
@@ -67,11 +68,12 @@ class ReportSchedule
 
     public static function update(int $id, array $d, bool $resetLastRun): void
     {
-        $sql = 'UPDATE report_schedules SET name = :name, frequency = :frequency, weekday = :weekday, month_day = :month_day, send_hour = :send_hour,
+        $sql = 'UPDATE report_schedules SET name = :name, report_type = :rtype, send_minute = :send_minute, queue_id = :queue_id, operator_id = :operator_id, frequency = :frequency, weekday = :weekday, month_day = :month_day, send_hour = :send_hour,
                        format = :format, project_id = :project_id, log_user_id = :log_user_id, category = :category, extra_recipients = :extra'
              . ($resetLastRun ? ', last_run_at = NOW()' : '') . ' WHERE id = :id';
         Database::connection()->prepare($sql)->execute([
-            'name' => $d['name'], 'frequency' => $d['frequency'], 'weekday' => $d['weekday'], 'month_day' => $d['month_day'],
+            'name' => $d['name'], 'rtype' => $d['report_type'], 'send_minute' => $d['send_minute'], 'queue_id' => $d['queue_id'], 'operator_id' => $d['operator_id'],
+            'frequency' => $d['frequency'], 'weekday' => $d['weekday'], 'month_day' => $d['month_day'],
             'send_hour' => $d['send_hour'], 'format' => $d['format'], 'project_id' => $d['project_id'], 'log_user_id' => $d['log_user_id'],
             'category' => $d['category'], 'extra' => $d['extra_recipients'], 'id' => $id,
         ]);
