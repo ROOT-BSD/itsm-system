@@ -6,10 +6,10 @@ $base = ['date_from' => $f['date_from'], 'date_to' => $f['date_to'], 'queue_id' 
 $qs = static fn(array $extra = []) => http_build_query(array_filter($extra + $base, static fn($v) => $v !== null && $v !== ''));
 ?>
 <div class="mb-3">
-    <?php if (!empty($unitMode)) { require __DIR__ . '/../unit/_nav.php'; } else { require __DIR__ . '/_back.php'; } ?>
+    <?php if (!empty($teamMode)) { echo '<a href="/team" class="text-decoration-none">&larr; Моя команда</a>'; } elseif (!empty($unitMode)) { require __DIR__ . '/../unit/_nav.php'; } else { require __DIR__ . '/_back.php'; } ?>
 </div>
 
-<h3 class="mb-2">Звіт по тікетах<?= !empty($unitMode) ? ' — мій підрозділ' : '' ?></h3>
+<h3 class="mb-2">Звіт по тікетах<?= !empty($teamMode) ? ' — моя команда' : (!empty($unitMode) ? ' — мій підрозділ' : '') ?></h3>
 <p class="text-muted">Облік часу роботи з тікетами, <strong>створеними в обраний період</strong>: скільки звернень надійшло й вирішено, за який час оператори вперше відповіли
     (від створення до першої відповіді) і за який вирішили (від створення до статусу «Вирішено»/«Закрито»).<?= !empty($unitMode) ? ' Враховуються лише тікети підрозділу.' : '' ?>
     Час — календарний (без урахування вихідних і робочих годин).</p>
@@ -52,7 +52,7 @@ $qs = static fn(array $extra = []) => http_build_query(array_filter($extra + $ba
     <div class="col-6 col-md-3"><div class="card text-center p-3 h-100 shadow-sm"><h2><?= (int) $s['resolved'] ?></h2><div class="text-muted">Вирішено / закрито<br><small>(ще відкрито: <?= (int) $s['open'] ?>)</small></div></div></div>
     <div class="col-6 col-md-3"><div class="card text-center p-3 h-100 shadow-sm"><h4 class="mt-1"><?= $e($d($s['response']['avg'])) ?></h4><div class="text-muted">Середній час до першої відповіді<br><small>медіана: <?= $e($d($s['response']['median'])) ?>, найдовше: <?= $e($d($s['response']['max'])) ?> (тікетів: <?= (int) $s['response']['n'] ?>)</small></div></div></div>
     <div class="col-6 col-md-3"><div class="card text-center p-3 h-100 shadow-sm"><h4 class="mt-1"><?= $e($d($s['resolution']['avg'])) ?></h4><div class="text-muted">Середній час до вирішення<br><small>медіана: <?= $e($d($s['resolution']['median'])) ?>, найдовше: <?= $e($d($s['resolution']['max'])) ?> (тікетів: <?= (int) $s['resolution']['n'] ?>)</small></div></div></div>
-    <div class="col-6 col-md-3"><div class="card text-center p-3 h-100 shadow-sm"><h2><?= $e(number_format((float) $s['hours'], 2, ',', ' ')) ?></h2><div class="text-muted">Витрачено годин<br><small>за записами обліку часу в тікетах</small></div></div></div>
+    <div class="col-6 col-md-3"><div class="card text-center p-3 h-100 shadow-sm"><h2><?= $e(\App\Core\TimeFormat::hm((float) $s['hours'])) ?></h2><div class="text-muted">Витрачено часу<br><small>за записами обліку часу в тікетах</small></div></div></div>
 </div>
 
 <p class="small">
@@ -62,13 +62,13 @@ $qs = static fn(array $extra = []) => http_build_query(array_filter($extra + $ba
 <?php foreach ([['По чергах', 'byQueue', 'Черга'], ['По операторах', 'byOperator', 'Оператор']] as [$title, $key, $col]): ?>
     <h5 class="mt-4"><?= $e($title) ?></h5>
     <table class="table table-bordered bg-white table-sm align-middle">
-        <thead><tr><th><?= $e($col) ?></th><th>Створено</th><th>Вирішено</th><th>Відкрито</th><th>Витрачено, год</th><th>Перша відповідь (середній / медіана)</th><th>Вирішення (середній / медіана)</th></tr></thead>
+        <thead><tr><th><?= $e($col) ?></th><th>Створено</th><th>Вирішено</th><th>Відкрито</th><th>Витрачено часу</th><th>Перша відповідь (середній / медіана)</th><th>Вирішення (середній / медіана)</th></tr></thead>
         <tbody>
         <?php foreach ($report[$key] as $r): ?>
             <tr>
                 <td><?= $e($r['name']) ?></td>
                 <td><?= (int) $r['total'] ?></td><td><?= (int) $r['resolved'] ?></td><td><?= (int) $r['open'] ?></td>
-                <td><?= $e(number_format((float) $r['hours'], 2, ',', ' ')) ?></td>
+                <td><?= $e(\App\Core\TimeFormat::hm((float) $r['hours'])) ?></td>
                 <td><?= $e($d($r['response']['avg'])) ?> / <?= $e($d($r['response']['median'])) ?></td>
                 <td><?= $e($d($r['resolution']['avg'])) ?> / <?= $e($d($r['resolution']['median'])) ?></td>
             </tr>
@@ -86,7 +86,7 @@ $qs = static fn(array $extra = []) => http_build_query(array_filter($extra + $ba
     </div>
 </div>
 <table class="table table-bordered bg-white table-sm align-middle">
-    <thead><tr><th>№</th><th>Тема</th><th>Черга</th><th>Оператор</th><th>Статус</th><th>Створено</th><th>До першої відповіді</th><th>До вирішення</th><th>Витрачено, год</th></tr></thead>
+    <thead><tr><th>№</th><th>Тема</th><th>Черга</th><th>Оператор</th><th>Статус</th><th>Створено</th><th>До першої відповіді</th><th>До вирішення</th><th>Витрачено часу</th></tr></thead>
     <tbody>
     <?php foreach ($rows as $t): ?>
         <tr>
@@ -98,7 +98,7 @@ $qs = static fn(array $extra = []) => http_build_query(array_filter($extra + $ba
             <td class="text-nowrap"><?= $e(date('d.m.Y H:i', strtotime($t['created_at']))) ?></td>
             <td class="text-nowrap"><?= $e($d($t['response_min'] !== null ? (float) $t['response_min'] : null)) ?></td>
             <td class="text-nowrap"><?= $e($d($t['resolution_min'] !== null ? (float) $t['resolution_min'] : null)) ?></td>
-            <td class="text-nowrap"><?= (float) $t['spent_hours'] > 0 ? $e(number_format((float) $t['spent_hours'], 2, ',', ' ')) : '—' ?></td>
+            <td class="text-nowrap"><?= (float) $t['spent_hours'] > 0 ? $e(\App\Core\TimeFormat::hm((float) $t['spent_hours'])) : '—' ?></td>
         </tr>
     <?php endforeach; ?>
     </tbody>

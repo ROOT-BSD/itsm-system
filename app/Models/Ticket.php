@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Core\Database;
+use App\Core\Team;
 use App\Core\Unit;
 use App\Services\NotificationService;
 
@@ -255,7 +256,7 @@ class Ticket
         $extra = '';
         // Адміністратор підрозділу додатково бачить тікети, де заявник або оператор — з його AD OU.
         foreach ([["{$alias}.requester_user_id", 'tua'], ["{$alias}.assigned_operator_id", 'tub']] as [$col, $pfx]) {
-            if (($c = Unit::userCondition($col, $pfx, $userId)) !== null) {
+            if (($c = Team::scopeCondition($col, $pfx, $userId)) !== null) {
                 $extra .= ' OR ' . $c[0];
                 $params += $c[1];
             }
@@ -271,7 +272,7 @@ class Ticket
      * решта — лише ті, де вони заявник (requester_user_id) або призначений
      * оператор (assigned_operator_id).
      *
-     * @param bool $canSeeUnassigned Оператори служби підтримки й керівники ІТ-підрозділу додатково бачать
+     * @param bool $canSeeUnassigned Оператори служби підтримки й керівники підрозділу додатково бачать
      *                                непризначені тікети (без оператора) — щоб було що брати в роботу,
      *                                а не лише свої вже призначені. Для адміна не має значення — він бачить усе.
      */
@@ -328,8 +329,8 @@ class Ticket
             return true;
         }
         // Адміністратор підрозділу: заявник або оператор тікета — з його AD OU.
-        return Unit::containsUser($userId, (int) ($ticket['requester_user_id'] ?? 0))
-            || Unit::containsUser($userId, (int) ($ticket['assigned_operator_id'] ?? 0));
+        return Team::scopeContains($userId, (int) ($ticket['requester_user_id'] ?? 0))
+            || Team::scopeContains($userId, (int) ($ticket['assigned_operator_id'] ?? 0));
     }
 
     public static function find(int $id): ?array
@@ -449,8 +450,9 @@ class Ticket
         if ($unitAdminId === null) {
             return ['', []];
         }
-        $a = Unit::userCondition("{$alias}.requester_user_id", "{$prefix}a", $unitAdminId);
-        $b = Unit::userCondition("{$alias}.assigned_operator_id", "{$prefix}b", $unitAdminId);
+        // Область — підрозділ (Адміністратор Підрозділу) або команда (Керівник відділу)
+        $a = \App\Core\Team::scopeCondition("{$alias}.requester_user_id", "{$prefix}a", $unitAdminId);
+        $b = \App\Core\Team::scopeCondition("{$alias}.assigned_operator_id", "{$prefix}b", $unitAdminId);
         if ($a === null || $b === null) {
             return [' AND 1 = 0', []];
         }
@@ -626,6 +628,9 @@ class Ticket
             if ($t) {
                 self::notifyUsers([$operatorId], 'Вам призначено тікет №' . $id, (string) $t['subject'], $id);
             }
+        }
+        if ($operatorId) {
+            NotificationService::subordinateTicketAssigned($id, $operatorId, $actingUserId);
         }
     }
 

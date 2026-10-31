@@ -422,7 +422,7 @@ class WikiController
         Auth::requireLogin();
         if (!WikiPage::canEdit(Auth::role())) {
             http_response_code(403);
-            echo 'Створювати й редагувати сторінки вікі можуть адміністратор і керівник ІТ-підрозділу.';
+            echo 'Створювати й редагувати сторінки вікі можуть адміністратор і керівник підрозділу.';
             exit;
         }
     }

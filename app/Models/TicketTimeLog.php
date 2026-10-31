@@ -64,7 +64,7 @@ class TicketTimeLog
      * (log_date, user_name, activity_category, hours, project_id/project_name, task_title) плюс ticket_id і kind = 'ticket'.
      *
      * Видимість: адміністратор системи — усе; адміністратор підрозділу — тікети підрозділу ({@see Ticket::unitWhere});
-     * інші ролі — лише власні записи.
+     * керівник підрозділу — усі доступні йому тікети; інші ролі — лише власні записи.
      *
      * @param array{project_id?: ?int, log_user_id?: ?int, category?: ?string} $filters
      */
@@ -104,6 +104,11 @@ class TicketTimeLog
             [$w, $p] = Ticket::unitWhere('t', $viewerId);
             $sql .= $w;
             $params += $p;
+        } elseif ($role === 'it_manager' || $role === 'dept_head') {
+            // Керівник підрозділу: записи по всіх тікетах, які йому доступні (свої, призначені на нього й непризначені).
+            [$w, $p] = Ticket::visibilityCondition('t', $viewerId, $role === 'it_manager');
+            $sql .= ' AND ' . $w;
+            $params += $p;
         } else {
             $sql .= ' AND l.user_id = :viewer';
             $params['viewer'] = $viewerId;
@@ -125,12 +130,17 @@ class TicketTimeLog
     }
 
     /** Години по тікетах (для сторінок «Облік часу»): [ticket_id, subject, queue_name, hours, entries]. */
-    public static function hoursByTicket(?int $unitAdminId = null, int $limit = 200): array
+    public static function hoursByTicket(?int $unitAdminId = null, int $limit = 200, ?int $visibleToUserId = null, bool $canSeeUnassigned = true): array
     {
         if (!self::ready()) {
             return [];
         }
         [$w, $p] = Ticket::unitWhere('t', $unitAdminId);
+        if ($visibleToUserId !== null) {
+            [$vw, $vp] = Ticket::visibilityCondition('t', $visibleToUserId, $canSeeUnassigned);
+            $w .= ' AND ' . $vw;
+            $p += $vp;
+        }
         $stmt = Database::connection()->prepare(
             "SELECT t.id AS ticket_id, t.subject, q.name AS queue_name, SUM(l.hours) AS hours, COUNT(*) AS entries
              FROM ticket_time_logs l JOIN tickets t ON t.id = l.ticket_id JOIN ticket_queues q ON q.id = t.queue_id

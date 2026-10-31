@@ -88,7 +88,7 @@
             <td><?= \App\Core\View::e($r['queue_name']) ?></td>
             <td><?= \App\Core\View::e($r['operator_name'] ?? '— не призначено —') ?></td>
             <td><span class="badge bg-<?= (int)$r['csat_score'] >= 4 ? 'success' : ((int)$r['csat_score'] === 3 ? 'warning text-dark' : 'danger') ?>"><?= (int)$r['csat_score'] ?> з 5</span></td>
-            <td class="text-nowrap"><?= \App\Core\View::e($r['updated_at']) ?></td>
+            <td class="text-nowrap"><?= \App\Core\View::dt($r['updated_at'], '') ?></td>
         </tr>
     <?php endforeach; ?>
     </tbody>

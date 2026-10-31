@@ -37,7 +37,7 @@ $statusColors = ['planned' => 'secondary', 'in_progress' => 'primary', 'complete
                             <h5 class="mb-0"><?= \App\Core\View::e($milestone['title']) ?></h5>
                             <?php if (!empty($milestone['target_date'])): ?>
                                 <div class="small text-muted">
-                                    Ціль: <?= \App\Core\View::e($milestone['target_date']) ?>
+                                    Ціль: <?= \App\Core\View::date($milestone['target_date'], '') ?>
                                     <?php if (\App\Models\Milestone::isOverdue($milestone)): ?>
                                         <span class="badge bg-danger">⚠️ Прострочено</span>
                                     <?php endif; ?>

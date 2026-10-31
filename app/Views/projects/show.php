@@ -25,7 +25,7 @@
 <div class="alert alert-danger">
     ⚠️ Прострочено етап<?= count($overdueMilestones) > 1 ? 'и' : '' ?> дорожньої карти:
     <?php $parts = []; foreach ($overdueMilestones as $m): ?>
-        <?php $parts[] = '«' . \App\Core\View::e($m['title']) . '» (мав бути готовий до ' . \App\Core\View::e($m['target_date']) . ')'; ?>
+        <?php $parts[] = '«' . \App\Core\View::e($m['title']) . '» (мав бути готовий до ' . \App\Core\View::date($m['target_date'], '') . ')'; ?>
     <?php endforeach; ?>
     <?= implode(', ', $parts) ?>
 </div>
@@ -99,6 +99,10 @@ $eMember = static fn($v) => \App\Core\View::e($v);
         <span>🔑 Доступ до проєкту<?= !empty($members) ? ' (учасників: ' . count($members) . ')' : '' ?></span>
         <span class="d-flex align-items-center gap-2 flex-wrap">
             <span class="text-muted small">Автор і відповідальний мають доступ завжди</span>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="project-access-toggle"
+                    data-bs-toggle="collapse" data-bs-target="#project-access-body" aria-expanded="true" aria-controls="project-access-body">
+                <span class="when-open">Згорнути</span><span class="when-closed">Розгорнути</span>
+            </button>
             <?php if (!empty($canLeave)): ?>
                 <form method="post" action="/projects/<?= (int)$project['id'] ?>/leave"
                       data-confirm="Вийти з проєкту «<?= $eMember($project['name']) ?>»? Ви більше не бачитимете його й його задачі (і підпроєкти, доступ до яких успадковано від нього), доки вас не додадуть знову.">
@@ -108,6 +112,7 @@ $eMember = static fn($v) => \App\Core\View::e($v);
             <?php endif; ?>
         </span>
     </div>
+    <div class="collapse show" id="project-access-body">
     <div class="card-body">
         <?php if (!empty($success)): ?>
             <div class="alert alert-success py-2"><?= $eMember($success) ?></div>
@@ -164,7 +169,9 @@ $eMember = static fn($v) => \App\Core\View::e($v);
             </div>
         <?php endif; ?>
     </div>
+    </div>
 </div>
+<script src="/assets/js/project-access.js"></script>
 
 <?php endif; ?>
 
@@ -213,7 +220,7 @@ $eMember = static fn($v) => \App\Core\View::e($v);
         $sortedTasks = array_map(static function ($t) { if (($t['status_code'] ?? '') === 'resolved') { $t['is_closed'] = 0; } return $t; }, $sortedTasks);
         usort($sortedTasks, static fn($a, $b) => [(int)$a['is_closed'], $a['due_date'] === null, (string)$a['due_date'], (int)$a['id']] <=> [(int)$b['is_closed'], $b['due_date'] === null, (string)$b['due_date'], (int)$b['id']]);
         foreach ($sortedTasks as $t): ?>
-        <tr class="<?= empty($t['is_closed']) ? \App\Core\View::urgencyClass($t['due_date'] ?? null) : '' ?>">
+        <tr class="<?= empty($t['is_closed']) ? \App\Core\View::urgencyClass($t['due_date'] ?? null) : 'task-struck' ?>">
             <td><a href="/tasks/<?= (int)$t['id'] ?>">#<?= (int)$t['id'] ?></a></td>
             <td><?php if (!empty($t['parent_task_id'])): ?><span class="text-muted" title="Підзадача задачі #<?= (int)$t['parent_task_id'] ?>">↳ </span><?php endif; ?><?= \App\Core\View::e($t['title']) ?>
                 <?= \App\Core\View::progress($t) ?></td>
@@ -223,9 +230,9 @@ $eMember = static fn($v) => \App\Core\View::e($v);
             <td><?= \App\Core\View::e($t['assignee_name'] ?? '—') ?></td>
             <td>
                 <?php if (\App\Models\Task::isOverdue($t)): ?>
-                    <span class="badge bg-danger">⚠️ <?= \App\Core\View::e($t['due_date']) ?></span>
+                    <span class="badge bg-danger">⚠️ <?= \App\Core\View::date($t['due_date'], '') ?></span>
                 <?php elseif (!empty($t['due_date'])): ?>
-                    <?= \App\Core\View::e($t['due_date']) ?>
+                    <?= \App\Core\View::date($t['due_date'], '') ?>
                 <?php else: ?>
                     <span class="text-muted">—</span>
                 <?php endif; ?>

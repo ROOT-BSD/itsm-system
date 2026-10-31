@@ -45,7 +45,7 @@ class ProjectController
         }
 
         View::render('projects/create', [
-            'users' => User::allActive(),
+            'users' => User::selectableFor(Auth::role(), (int) Auth::id()),
             'projects' => Project::allVisibleTo(Auth::id(), Auth::hasRole(['admin'])),
             'preselectedParentId' => $preselectedParentId,
             'parentProject' => $parentProject,
@@ -64,6 +64,10 @@ class ProjectController
 
         if ($name === '') {
             header('Location: /projects/create?error=' . urlencode('Назва проєкту обов\'язкова'));
+            exit;
+        }
+        if ($responsibleUserId !== null && !$this->userInScope($responsibleUserId)) {
+            header('Location: /projects/create?error=' . urlencode('Відповідальним можна призначити лише користувача зі свого підрозділу чи команди.'));
             exit;
         }
         if ($parentId !== null) {
@@ -121,11 +125,11 @@ class ProjectController
             'canManageMembers' => $canManageMembers,
             'canLeave' => Project::canLeave($project, (int) Auth::id()),
             'parentName' => !empty($project['parent_id']) ? ($project['parent_name'] ?? null) : null,
-            'memberCandidates' => $canManageMembers ? Project::memberCandidates($project) : [],
+            'memberCandidates' => $canManageMembers ? $this->scopeUsers(Project::memberCandidates($project)) : [],
             'success' => $_GET['success'] ?? null,
             'error' => $_GET['error'] ?? null,
             'tasks' => Task::openForProject($project['id']),
-            'users' => User::allActive(),
+            'users' => User::selectableFor(Auth::role(), (int) Auth::id(), (int) ($project['responsible_user_id'] ?? 0) ?: null),
             'subProjects' => Project::subProjectsOf($project['id']),
             'linkedTickets' => Ticket::forProject($project['id']),
             'overdueMilestones' => Project::overdueMilestonesFor($project['id']),
@@ -367,6 +371,9 @@ class ProjectController
         $project = $this->requireProjectAccess((int) $params['id']);
         $this->requireMemberManager($project);
 
+        if (!$this->userInScope((int) ($_POST['user_id'] ?? 0))) {
+            $this->backToProject((int) $project['id'], 'error', 'Додати можна лише користувача зі свого підрозділу чи команди.');
+        }
         $result = Project::addMember((int) $project['id'], (int) ($_POST['user_id'] ?? 0), Auth::id());
         [$key, $message] = match ($result) {
             'added' => ['success', 'Доступ до проєкту надано.'],
@@ -432,6 +439,11 @@ class ProjectController
         $this->requireProjectAccess($projectId);
 
         $responsibleUserId = !empty($_POST['responsible_user_id']) ? (int) $_POST['responsible_user_id'] : null;
+        $current = (int) (Project::find($projectId)['responsible_user_id'] ?? 0);
+        if ($responsibleUserId !== null && $responsibleUserId !== $current && !$this->userInScope($responsibleUserId)) {
+            header('Location: /projects/' . $projectId . '?error=' . urlencode('Відповідальним можна призначити лише користувача зі свого підрозділу чи команди.'));
+            exit;
+        }
 
         Project::updateResponsible($projectId, $responsibleUserId, Auth::id());
         header('Location: /projects/' . $projectId);
@@ -453,6 +465,25 @@ class ProjectController
             exit;
         }
         return $project;
+    }
+
+    /** Чи може поточний користувач обирати цю людину: Адміністратор Підрозділу — свій підрозділ, Керівник відділу — свою команду. */
+    private function userInScope(int $id): bool
+    {
+        $role = Auth::role();
+        if ($role === 'it_manager') {
+            return \App\Models\User::inSelectScope($role, (int) Auth::id(), $id);
+        }
+        if ($role !== \App\Core\Unit::ROLE && $role !== \App\Core\Team::ROLE) {
+            return true;
+        }
+        return $id === (int) Auth::id() || \App\Core\Team::scopeContains((int) Auth::id(), $id);
+    }
+
+    /** @param array<int, array<string, mixed>> $users */
+    private function scopeUsers(array $users): array
+    {
+        return array_values(array_filter($users, fn($u) => $this->userInScope((int) $u['id'])));
     }
 
     private function requireManagerRole(): void

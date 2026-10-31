@@ -29,7 +29,7 @@ class WikiPage
     public static function allowedVisibilities(?string $role): array
     {
         $allowed = ['all'];
-        if (in_array($role, ['admin', 'unit_admin', 'it_manager', 'sysadmin', 'support_operator', 'observer'], true)) {
+        if (in_array($role, ['admin', 'unit_admin', 'it_manager', 'dept_head', 'sysadmin', 'support_operator', 'observer'], true)) {
             $allowed[] = 'staff';
         }
         if ($role === 'admin') {

@@ -84,7 +84,7 @@ $entityLinks = ['task' => '/tasks/', 'project' => '/projects/', 'ticket' => '/ti
             $shortName = $resolvedName !== null ? $shortenName($resolvedName) : null;
             ?>
             <tr>
-                <td><?= \App\Core\View::e($entry['created_at']) ?></td>
+                <td><?= \App\Core\View::dt($entry['created_at'], '') ?></td>
                 <td><?= \App\Core\View::e($entityTypeLabels[$type] ?? $type) ?></td>
                 <td>
                     <?php if (isset($entityLinks[$type])): ?>
@@ -115,6 +115,9 @@ $entityLinks = ['task' => '/tasks/', 'project' => '/projects/', 'ticket' => '/ti
                                     $displayValue = $relationTypeLabels[$value] ?? (string) $value;
                                 } elseif (isset($referencedNames[$key][(int) $value])) {
                                     $displayValue = $referencedNames[$key][(int) $value];
+                                } elseif (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/', $value)) {
+                                    $displayValue = \App\Core\TimeFormat::dateTime($value);
+                                    if (strlen($value) === 10) { $displayValue = \App\Core\TimeFormat::date($value); }
                                 } else {
                                     $displayValue = (string) $value;
                                 }

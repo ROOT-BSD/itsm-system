@@ -19,10 +19,10 @@
             <tr><th>Проєкт</th><td><a href="/projects/<?= (int)$ticket['project_id'] ?>"><?= \App\Core\View::e($ticket['project_name']) ?></a></td></tr>
             <?php endif; ?>
             <tr><th>Заявник</th><td><?= \App\Core\View::e($ticket['requester_name']) ?> (<?= \App\Core\View::e($ticket['requester_email']) ?>)</td></tr>
-            <tr><th>Створено</th><td><?= \App\Core\View::e($ticket['created_at']) ?></td></tr>
+            <tr><th>Створено</th><td><?= \App\Core\View::dt($ticket['created_at'], '') ?></td></tr>
         </table>
 
-        <?php if (!empty($kbSuggestions) && \App\Core\Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'sysadmin', 'support_operator', 'observer'])): ?>
+        <?php if (!empty($kbSuggestions) && \App\Core\Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'dept_head', 'sysadmin', 'support_operator', 'observer'])): ?>
             <div class="alert alert-light border py-2 mb-2 small">
                 <strong>📚 База знань — схожі статті:</strong>
                 <?php foreach ($kbSuggestions as $kb): ?>
@@ -34,14 +34,14 @@
 
         <?php if ($sla['has_policy']): ?>
             <?php if ($sla['response_overdue']): ?>
-                <div class="alert alert-danger py-2 mb-2">⚠️ Прострочено норматив першої відповіді (мала бути до <?= \App\Core\View::e($sla['response_due_at']) ?>)</div>
+                <div class="alert alert-danger py-2 mb-2">⚠️ Прострочено норматив першої відповіді (мала бути до <?= \App\Core\View::dt($sla['response_due_at'], '') ?>)</div>
             <?php elseif (empty($ticket['first_response_at'])): ?>
-                <div class="alert alert-warning py-2 mb-2">Норматив першої відповіді — до <?= \App\Core\View::e($sla['response_due_at']) ?></div>
+                <div class="alert alert-warning py-2 mb-2">Норматив першої відповіді — до <?= \App\Core\View::dt($sla['response_due_at'], '') ?></div>
             <?php endif; ?>
             <?php if ($sla['resolution_overdue']): ?>
-                <div class="alert alert-danger py-2 mb-2">⚠️ Прострочено норматив вирішення (мало бути до <?= \App\Core\View::e($sla['resolution_due_at']) ?>)</div>
+                <div class="alert alert-danger py-2 mb-2">⚠️ Прострочено норматив вирішення (мало бути до <?= \App\Core\View::dt($sla['resolution_due_at'], '') ?>)</div>
             <?php elseif (!in_array($ticket['status'], ['resolved', 'closed'], true)): ?>
-                <div class="alert alert-info py-2 mb-2">Норматив вирішення — до <?= \App\Core\View::e($sla['resolution_due_at']) ?></div>
+                <div class="alert alert-info py-2 mb-2">Норматив вирішення — до <?= \App\Core\View::dt($sla['resolution_due_at'], '') ?></div>
             <?php endif; ?>
         <?php endif; ?>
 
@@ -76,7 +76,7 @@
             <?php endforeach; ?>
             <button class="btn btn-sm btn-outline-primary" type="submit">Зберегти</button>
         </form>
-        <?php elseif (!empty($ticketLabels) && \App\Core\Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'sysadmin', 'support_operator', 'observer'])): ?>
+        <?php elseif (!empty($ticketLabels) && \App\Core\Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'dept_head', 'sysadmin', 'support_operator', 'observer'])): ?>
         <p class="small mb-2">Мітки: <?php foreach ($ticketLabels as $lb): ?><span class="badge text-bg-<?= \App\Core\View::e($lb['color']) ?>"><?= \App\Core\View::e($lb['name']) ?></span> <?php endforeach; ?></p>
         <?php endif; endif; ?>
 
@@ -234,14 +234,14 @@ require __DIR__ . '/../attachments/_panel.php';
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between">
         <span>Облік часу</span>
-        <span class="text-muted small">Разом: <?= \App\Core\View::e(\App\Services\TicketWorkReport::duration(round($timeTotal * 60))) ?> (<?= number_format($timeTotal, 2, ',', ' ') ?> год.)</span>
+        <span class="text-muted small">Разом: <?= \App\Core\View::e(\App\Core\TimeFormat::hm($timeTotal)) ?></span>
     </div>
     <?php if ($timeLogs): ?>
     <ul class="list-group list-group-flush">
         <?php foreach ($timeLogs as $l): ?>
             <li class="list-group-item d-flex flex-wrap gap-2 align-items-center small">
-                <span class="text-nowrap"><?= \App\Core\View::e($l['log_date']) ?></span>
-                <strong><?= \App\Core\View::e(\App\Services\TicketWorkReport::duration(round((float) $l['hours'] * 60))) ?></strong>
+                <span class="text-nowrap"><?= \App\Core\View::date($l['log_date'], '') ?></span>
+                <strong><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $l['hours'])) ?></strong>
                 <span><?= \App\Core\View::e($l['user_name']) ?></span>
                 <?php if (!empty($l['activity_category'])): ?><span class="badge text-bg-light"><?= \App\Core\View::e($l['activity_category']) ?></span><?php endif; ?>
                 <span class="text-muted"><?= \App\Core\View::e($l['comment'] ?? '') ?></span>
@@ -260,8 +260,8 @@ require __DIR__ . '/../attachments/_panel.php';
         <form method="post" action="/tickets/<?= (int)$ticket['id'] ?>/time" class="row g-2 align-items-end">
             <?= \App\Core\Csrf::field() ?>
             <div class="col-6 col-md-2">
-                <label class="form-label small mb-1">Годин</label>
-                <input type="number" name="hours" step="0.25" min="0.25" max="24" class="form-control form-control-sm" required>
+                <label class="form-label small mb-1">Хвилин</label>
+                <input type="number" name="minutes" step="5" min="1" max="1440" value="15" inputmode="numeric" class="form-control form-control-sm" required>
             </div>
             <div class="col-6 col-md-3">
                 <label class="form-label small mb-1">Дата</label>
@@ -290,7 +290,7 @@ require __DIR__ . '/../attachments/_panel.php';
         <li class="list-group-item">
             <strong><?= \App\Core\View::e($c['author_name'] ?? $ticket['requester_name']) ?></strong>
             <span class="badge bg-light text-dark border"><?= $c['author_type'] === 'operator' ? 'оператор' : 'заявник' ?></span>
-            <span class="text-muted small"><?= \App\Core\View::e($c['created_at']) ?></span>
+            <span class="text-muted small"><?= \App\Core\View::dt($c['created_at'], '') ?></span>
             <p class="mb-0"><?= \App\Core\View::richText($c['body'], $attachments ?? [], fn($id) => '/attachments/' . $id) ?></p>
         </li>
         <?php endforeach; ?>

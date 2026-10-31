@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS users (
     locked_until DATETIME NULL,                    -- NULL = не заблоковано; блокування завжди прив'язане до КОНКРЕТНОГО користувача, не IP
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    manager_id INT NULL,                           -- прямий керівник (Керівник відділу) — міграція 063
+    KEY idx_users_manager (manager_id),
     FOREIGN KEY (role_id) REFERENCES roles(id),
+    CONSTRAINT fk_users_manager FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE KEY uq_users_ad_guid (ad_guid)
 ) ENGINE=InnoDB;
 
@@ -208,6 +211,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     milestone_id INT NULL,                 -- прив'язка до етапу/контрольної точки (дорожня карта)
     estimated_hours DECIMAL(6,2) NULL,
     actual_hours DECIMAL(6,2) NOT NULL DEFAULT 0,
+    is_archived TINYINT(1) NOT NULL DEFAULT 0,   -- міграція 065: закриту задачу від керівництва заархівовано
+    archived_at DATETIME NULL,
+    archived_by INT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -477,7 +483,7 @@ CREATE TABLE IF NOT EXISTS email_ingest_log (
 CREATE TABLE IF NOT EXISTS task_due_reminders (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id INT NOT NULL,
-    reminder_type ENUM('2d','1d','due') NOT NULL,
+    reminder_type ENUM('2d','1d','due','head_overdue') NOT NULL,
     sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_task_reminder (task_id, reminder_type),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -1034,4 +1040,8 @@ INSERT IGNORE INTO schema_migrations (version, name, applied_via) VALUES
 ('059', 'checklist_hidden', 'baseline'),
 ('060', 'kb_feedback', 'baseline'),
 ('061', 'task_rule_events_notify_prefs', 'baseline'),
-('062', 'task_labels_rule_actions', 'baseline');
+('062', 'task_labels_rule_actions', 'baseline'),
+('063', 'department_head_role', 'baseline'),
+('064', 'rename_it_manager_role', 'baseline'),
+('065', 'task_archive', 'baseline'),
+('066', 'head_overdue_reminder', 'baseline');

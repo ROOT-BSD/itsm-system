@@ -43,6 +43,42 @@ class User
      * цей самий фільтр був продубльований окремим приватним методом у трьох різних
      * контролерах (Project/Task/TicketController).
      */
+    /**
+     * Кого може обирати (відповідальним за проєкт, учасником) користувач з роллю $role: Адміністратор Підрозділу — лише свій
+     * підрозділ (разом із вкладеними), Керівник відділу — себе й свою команду; решта ролей — усіх активних.
+     * Сам користувач завжди в списку. $keepId — id, що лишається доступним (поточний відповідальний), щоб форма не губила значення.
+     *
+     * @return array<int, array<string, mixed>> рядки у форматі allActive()
+     */
+    public static function selectableFor(?string $role, int $userId, ?int $keepId = null): array
+    {
+        $all = self::allActive();
+        if ($role === \App\Core\Unit::ROLE) {
+            $allowed = fn(int $id) => \App\Core\Unit::containsUser($userId, $id);
+        } elseif ($role === \App\Core\Team::ROLE) {
+            $allowed = fn(int $id) => \App\Core\Team::containsUser($userId, $id);
+        } elseif ($role === 'it_manager' && \App\Core\Unit::userOu($userId) !== null) {
+            // Керівник підрозділу з визначеним підрозділом бачить лише його (без підрозділу — усіх, як і раніше)
+            $allowed = fn(int $id) => \App\Core\Unit::viewerOuContains($userId, $id) === true;
+        } else {
+            return $all;
+        }
+        return array_values(array_filter($all, fn($u) => (int) $u['id'] === $userId || ($keepId !== null && (int) $u['id'] === $keepId) || $allowed((int) $u['id'])));
+    }
+
+    /** Чи може користувач з роллю $role обирати людину $id (Адміністратор Підрозділу — свій підрозділ, Керівник відділу — себе й команду; решта — будь-кого). */
+    public static function inSelectScope(?string $role, int $userId, int $id, ?int $keepId = null): bool
+    {
+        if ($role === 'it_manager') {
+            $in = \App\Core\Unit::viewerOuContains($userId, $id);
+            return $in === null || $in === true || ($keepId !== null && $id === $keepId);
+        }
+        if ($role !== \App\Core\Unit::ROLE && $role !== \App\Core\Team::ROLE) {
+            return true;
+        }
+        return $id === $userId || ($keepId !== null && $id === $keepId) || \App\Core\Team::scopeContains($userId, $id);
+    }
+
     public static function allActive(): array
     {
         return Database::connection()
@@ -280,7 +316,7 @@ class User
         if (!\App\Core\Unit::localReady()) {
             return;
         }
-        $stmt = Database::connection()->prepare("UPDATE users SET unit_ou = :ou WHERE id = :id AND auth_source = 'local'");
+        $stmt = Database::connection()->prepare("UPDATE users SET unit_ou = :ou WHERE id = :id");
         $stmt->execute(['ou' => $ouPath !== '' ? $ouPath : null, 'id' => $userId]);
         \App\Core\Unit::reset();
     }

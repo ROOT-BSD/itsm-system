@@ -164,6 +164,31 @@ class View
         return rtrim((string) preg_replace(self::IMAGE_TOKEN, '', (string) $text));
     }
 
+    /**
+     * Дата для показу: «30.10.2026» (замість «2026-10-30»); порожнє значення — $empty. Результат уже екранований.
+     * Приймає як дату (РРРР-ММ-ДД), так і дату з часом — час відкидається.
+     */
+    public static function date(?string $value, string $empty = ''): string
+    {
+        $v = trim((string) $value);
+        if ($v === '' || str_starts_with($v, '0000')) {
+            return self::e($empty);
+        }
+        $ts = strtotime($v);
+        return $ts === false ? self::e($v) : date('d.m.Y', $ts);
+    }
+
+    /** Дата й час для показу: «30.10.2026 14:05» (із секундами — $seconds). Результат уже екранований. */
+    public static function dt(?string $value, string $empty = '', bool $seconds = false): string
+    {
+        $v = trim((string) $value);
+        if ($v === '' || str_starts_with($v, '0000')) {
+            return self::e($empty);
+        }
+        $ts = strtotime($v);
+        return $ts === false ? self::e($v) : date($seconds ? 'd.m.Y H:i:s' : 'd.m.Y H:i', $ts);
+    }
+
     /** Екранування виводу для захисту від XSS */
     public static function e(?string $value): string
     {

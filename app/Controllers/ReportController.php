@@ -16,7 +16,7 @@ class ReportController
 
         View::render('reports/index', [
             'projects' => Project::allVisibleTo(Auth::id(), Auth::hasRole(['admin'])),
-            'users' => User::allActive(),
+            'users' => User::selectableFor(Auth::role(), (int) Auth::id()),
             'categories' => Task::distinctCategoriesVisibleTo(Auth::id(), Auth::hasRole(['admin'])),
             'error' => $_GET['error'] ?? null,
             'canTicketReport' => Auth::hasRole(['admin']) || \App\Core\Access::isUnitAdmin(Auth::role()),
@@ -93,7 +93,7 @@ class ReportController
         );
 
         $filterLines = [
-            "Період: {$periodLabel} ({$dateFrom} — {$dateTo})",
+            "Період: {$periodLabel} (" . \App\Core\TimeFormat::date($dateFrom) . " — " . \App\Core\TimeFormat::date($dateTo) . ")",
             "Проєкт: {$projectLabel}",
             "Користувач: {$userLabel}",
         ];

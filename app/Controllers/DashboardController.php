@@ -64,8 +64,19 @@ class DashboardController
             $stats = $statsStmt->fetch();
         }
 
+        // Картка «Відкриті задачі» — лише мої (де я виконавець); таблиця нижче — усі відкриті задачі,
+        // видимі мені та моєму відділу/підрозділу (та сама видимість, що в розділі «Задачі»).
+        $stats['open_tasks'] = (int) $db->query(
+            'SELECT COUNT(*) FROM tasks t JOIN task_statuses ts ON ts.id = t.status_id WHERE ts.is_closed = 0 AND t.assignee_id = ' . (int) $uid
+        )->fetchColumn();
+        $visibleOpen = array_values(array_filter(
+            \App\Models\Task::allOpenVisibleTo((int) $uid, $isAdmin),
+            static fn(array $t): bool => empty($t['is_closed'])
+        ));
+        $visibleOpen = array_slice(\App\Models\Task::sortForDisplay($visibleOpen), 0, 300);
+
         View::render('dashboard', [
-            'myOpenTasks' => $myOpenTasks,
+            'myOpenTasks' => $visibleOpen,
             'stats' => $stats,
         ]);
     }

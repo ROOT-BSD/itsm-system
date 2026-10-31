@@ -103,6 +103,7 @@ class Task
         return array_values(array_filter(
             self::forProject($projectId),
             fn(array $t): bool => empty($t['is_closed']) || $t['status_code'] === 'resolved' // «Вирішена» завжди видно в таблиці проєкту
+                || (self::archiveReady() && self::canArchive(\App\Core\Auth::role()) && empty($t['is_archived']) && self::isManagerial($t)) // закрита від керівництва, ще не в архіві
         ));
     }
 
@@ -113,7 +114,7 @@ class Task
      */
     public static function allOpenVisibleTo(int $userId, bool $isAdmin): array
     {
-        $sql = "SELECT t.*, ts.name AS status_name, ts.sort_order AS status_order, tt.name AS type_name, p.name AS project_name,
+        $sql = "SELECT t.*, ts.name AS status_name, ts.is_closed, ts.sort_order AS status_order, tt.name AS type_name, p.name AS project_name,
                        asg.full_name AS assignee_name,
                        DATE_FORMAT(t.created_at, '%d.%m.%Y') AS created_at_formatted" . TaskChecklist::progressSelect() . "
                 FROM tasks t
@@ -121,7 +122,7 @@ class Task
                 JOIN task_types tt ON tt.id = t.type_id
                 JOIN projects p ON p.id = t.project_id
                 LEFT JOIN users asg ON asg.id = t.assignee_id
-                WHERE ts.is_closed = 0";
+                WHERE (ts.is_closed = 0 OR " . self::pendingArchiveSql() . ")";
         $params = [];
 
         if (!$isAdmin) {
@@ -148,7 +149,7 @@ class Task
                 JOIN task_types tt ON tt.id = t.type_id
                 JOIN projects p ON p.id = t.project_id
                 LEFT JOIN users asg ON asg.id = t.assignee_id
-                WHERE ts.is_closed = 1";
+                WHERE ts.is_closed = 1 AND NOT " . self::pendingArchiveSql();
         $params = [];
 
         if (!$isAdmin) {
@@ -232,7 +233,7 @@ class Task
         $stmt->execute(['id' => $id]);
         $old = $stmt->fetch();
 
-        $stmt = $db->prepare('UPDATE tasks SET status_id = :status_id WHERE id = :id');
+        $stmt = $db->prepare('UPDATE tasks SET status_id = :status_id' . (self::archiveReady() ? ', is_archived = 0, archived_at = NULL, archived_by = NULL' : '') . ' WHERE id = :id');
         $stmt->execute(['status_id' => $statusId, 'id' => $id]);
         Audit::log('task', $id, 'status_changed', $userId, ['status_id' => $statusId]);
 
@@ -253,6 +254,20 @@ class Task
             }
         }
         \App\Services\TaskRuleService::apply($id, 'status', $statusId);
+        // Задача від керівництва: сповіщення перевіряючому («Вирішена») або автору (закрито)
+        if ($statusId !== (int) $old['status_id']) {
+            foreach (self::statuses() as $s) {
+                if ((int) $s['id'] === $statusId) {
+                    if ($s['code'] === 'resolved') {
+                        \App\Services\NotificationService::taskReviewStep($id, 'resolved', $userId);
+                        \App\Services\NotificationService::subordinateTaskStatus($id, 'resolved', $userId);
+                    } elseif (!empty($s['is_closed'])) {
+                        \App\Services\NotificationService::taskReviewStep($id, 'closed', $userId);
+                        \App\Services\NotificationService::subordinateTaskStatus($id, 'closed', $userId);
+                    }
+                }
+            }
+        }
     }
 
     public static function updateAssignee(int $id, ?int $assigneeId, int $actingUserId): void
@@ -1069,6 +1084,140 @@ class Task
     }
 
     /** Текст помилки, якщо задачу не можна перевести в цей статус (закрити, поки є незакриті підзадачі); інакше null. */
+    // ---- Задачі від керівництва: Вирішена → Закрита (керівник відділу) → Архів (керівник підрозділу) ----
+
+    /** Колонка архівування є (міграція 065). */
+    public static function archiveReady(): bool
+    {
+        static $ok = null;
+        return $ok ??= Database::columnExists('tasks', 'is_archived');
+    }
+
+    /**
+     * SQL-умова «задача від керівництва»: автор — Керівник підрозділу/відділу, виконавець — інша особа.
+     * $a — псевдонім таблиці tasks.
+     */
+    public static function managerialSql(string $a = 't'): string
+    {
+        return "({$a}.assignee_id IS NOT NULL AND {$a}.assignee_id <> {$a}.author_id AND EXISTS ("
+            . "SELECT 1 FROM users mau JOIN roles mar ON mar.id = mau.role_id "
+            . "WHERE mau.id = {$a}.author_id AND mar.code IN ('it_manager','dept_head')))";
+    }
+
+    /** Хто з поточних користувачів бачить закриті, але ще не заархівовані задачі від керівництва (і може їх архівувати). */
+    public static function canArchive(?string $role): bool
+    {
+        return in_array($role, ['admin', 'it_manager'], true);
+    }
+
+    /**
+     * SQL-умова «закрита задача від керівництва, ще не в архіві» — для глядачів, які можуть архівувати
+     * (вона лишається в списках закресленою). Для решти — порожній рядок (поведінка як раніше).
+     */
+    public static function pendingArchiveSql(string $a = 't', string $ts = 'ts'): string
+    {
+        if (!self::archiveReady() || !self::canArchive(\App\Core\Auth::role())) {
+            return '0';
+        }
+        return "({$ts}.is_closed = 1 AND {$a}.is_archived = 0 AND " . self::managerialSql($a) . ')';
+    }
+
+    /** Задача (рядок із tasks) — від керівництва? */
+    public static function isManagerial(array $task): bool
+    {
+        if (empty($task['assignee_id']) || (int) $task['assignee_id'] === (int) $task['author_id']) {
+            return false;
+        }
+        $stmt = Database::connection()->prepare('SELECT r.code FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = :id');
+        $stmt->execute(['id' => (int) $task['author_id']]);
+        return in_array($stmt->fetchColumn(), ['it_manager', 'dept_head'], true);
+    }
+
+    /**
+     * Хто перевіряє й закриває задачу від керівництва: найближчий Керівник відділу вгору по ланцюжку
+     * підпорядкування виконавця; якщо його немає — автор задачі. NULL — не задача від керівництва.
+     */
+    public static function reviewerId(array $task): ?int
+    {
+        if (!self::isManagerial($task)) {
+            return null;
+        }
+        $head = \App\Core\Team::nearestHead((int) $task['assignee_id']);
+        if ($head !== null) {
+            return $head;
+        }
+        return (int) $task['author_id'];
+    }
+
+    /** Чи може користувач ставити/знімати «закритий» статус задачі (для задач від керівництва — лише перевіряючий або адмін). */
+    public static function canSetClosed(array $task, int $userId, ?string $role): bool
+    {
+        if ($role === 'admin') {
+            return true;
+        }
+        $reviewer = self::reviewerId($task);
+        return $reviewer === null || $reviewer === $userId;
+    }
+
+    /** Текст відмови, якщо зміна статусу порушує правила задач від керівництва; інакше NULL. */
+    public static function managerialStatusProblem(int $taskId, int $newStatusId, int $userId, ?string $role): ?string
+    {
+        $db = Database::connection();
+        $stmt = $db->prepare('SELECT t.author_id, t.assignee_id, ts.is_closed AS old_closed FROM tasks t JOIN task_statuses ts ON ts.id = t.status_id WHERE t.id = :id');
+        $stmt->execute(['id' => $taskId]);
+        $task = $stmt->fetch();
+        if (!$task) {
+            return null;
+        }
+        $newClosed = self::statusIsClosed($newStatusId);
+        if ($newClosed === (bool) $task['old_closed']) {
+            return null;
+        }
+        if (!self::canSetClosed($task, $userId, $role)) {
+            return $newClosed
+                ? 'Задачу від керівництва закриває лише Керівник відділу виконавця (після перевірки). Виконавець може поставити статус «Вирішена».'
+                : 'Закриту задачу від керівництва може повернути в роботу лише той, хто її закрив (Керівник відділу, автор або адміністратор).';
+        }
+        return null;
+    }
+
+    /** Надіслати закриту задачу від керівництва в архів (або повернути з архіву). */
+    public static function setArchived(int $taskId, bool $archived, int $userId): void
+    {
+        Database::connection()->prepare(
+            'UPDATE tasks SET is_archived = :a, archived_at = ' . ($archived ? 'NOW()' : 'NULL') . ', archived_by = ' . ($archived ? ':u' : 'NULL') . ' WHERE id = :id'
+        )->execute($archived ? ['a' => 1, 'u' => $userId, 'id' => $taskId] : ['a' => 0, 'id' => $taskId]);
+        Audit::log('task', $taskId, $archived ? 'archived' : 'unarchived', $userId, []);
+    }
+
+    /**
+     * Права на зміну задачі. Керівник відділу керує задачами підлеглих (де виконавець чи автор — він сам або його підлеглий);
+     * в інших задачах проєкту, до якого має доступ лише як керівник команди, — тільки перегляд (і коментарі).
+     * Якщо проєкт (або батьківський) створив він, відповідає за нього чи є його учасником — права повні.
+     */
+    public static function canEdit(array $task, int $userId, ?string $role): bool
+    {
+        if ($role !== 'dept_head') {
+            return true;
+        }
+        $mine = array_merge([$userId], \App\Core\Team::subordinateIds($userId));
+        if (in_array((int) ($task['assignee_id'] ?? 0), $mine, true) || in_array((int) ($task['author_id'] ?? 0), $mine, true)) {
+            return true;
+        }
+        $pid = (int) $task['project_id'];
+        for ($i = 0; $i < 6 && $pid > 0; $i++) {
+            $project = Project::find($pid);
+            if (!$project) {
+                break;
+            }
+            if ((int) $project['created_by'] === $userId || (int) ($project['responsible_user_id'] ?? 0) === $userId || Project::isMember($pid, $userId)) {
+                return true;
+            }
+            $pid = (int) ($project['parent_id'] ?? 0);
+        }
+        return false;
+    }
+
     public static function statusChangeProblem(int $taskId, int $statusId): ?string
     {
         if (!TaskChecklist::ready() || !self::statusIsClosed($statusId)) {

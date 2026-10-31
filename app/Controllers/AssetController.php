@@ -12,7 +12,7 @@ use App\Services\TableExport;
 
 /**
  * Реєстр обладнання й ПЗ: список з пошуком, картка активу (зв'язки, тікети, історія), створення/зміна, імпорт і експорт CSV/XLSX.
- * Доступ: адміністратор, менеджер ІТ, оператор; адміністратор підрозділу — активи свого підрозділу (див. Asset::scopeSql).
+ * Доступ: адміністратор, керівник підрозділу, оператор; адміністратор підрозділу — активи свого підрозділу (див. Asset::scopeSql).
  */
 class AssetController
 {
@@ -222,7 +222,7 @@ class AssetController
     {
         $a = $this->visibleOrFail((int) $params['id']);
         if (!Access::canDeleteAssets(Auth::role())) {
-            header('Location: /it-assets/' . (int) $a['id'] . '?error=' . urlencode('Видаляти картки може лише адміністратор системи чи менеджер ІТ. Переведіть актив у статус «Списано».'));
+            header('Location: /it-assets/' . (int) $a['id'] . '?error=' . urlencode('Видаляти картки може лише адміністратор системи чи керівник підрозділу. Переведіть актив у статус «Списано».'));
             exit;
         }
         Asset::delete((int) $a['id'], $this->uid(), $a['name']);

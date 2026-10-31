@@ -103,14 +103,14 @@ class TicketsApiController extends ApiController
             if (!is_string($priority) || !isset(Ticket::PRIORITIES[$priority])) {
                 $errors['priority'] = 'Допустимі значення: ' . implode(', ', array_keys(Ticket::PRIORITIES)) . '.';
             } elseif (!Access::canAssignTicketOperator($this->role)) {
-                $errors['priority'] = 'Змінювати пріоритет можуть лише адміністратор, керівник ІТ-підрозділу й оператор служби підтримки.';
+                $errors['priority'] = 'Змінювати пріоритет можуть лише адміністратор, керівник підрозділу й оператор служби підтримки.';
             }
         }
         $operatorGiven = array_key_exists('operator_id', $data);
         $operatorId = null;
         if ($operatorGiven) {
             if (!Access::canAssignTicketOperator($this->role)) {
-                $errors['operator_id'] = 'Призначати оператора можуть лише адміністратор, керівник ІТ-підрозділу й оператор служби підтримки.';
+                $errors['operator_id'] = 'Призначати оператора можуть лише адміністратор, керівник підрозділу й оператор служби підтримки.';
             } else {
                 $operatorId = $this->intField($data, 'operator_id', $errors);
                 if ($operatorId !== null) {

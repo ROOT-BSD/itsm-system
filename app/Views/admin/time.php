@@ -1,8 +1,8 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
-        <?php if (!empty($unitMode)) { require __DIR__ . '/../unit/_nav.php'; } else { require __DIR__ . '/_back.php'; } ?>
+        <?php if (!empty($unitMode)) { require __DIR__ . '/../unit/_nav.php'; } elseif (!empty($managerMode)) { echo '<a href="/" class="text-decoration-none">&larr; Дашборд</a>'; } else { require __DIR__ . '/_back.php'; } ?>
         <h3 class="mb-0 mt-1">Облік часу</h3>
-        <div class="text-muted small"><?= !empty($unitMode) ? 'Проєкти й тікети підрозділу' : 'Усі проєкти й тікети' ?></div>
+        <div class="text-muted small"><?= !empty($unitMode) ? 'Проєкти й тікети підрозділу' : (!empty($managerMode) ? 'Усі доступні вам проєкти й тікети' : 'Усі проєкти й тікети') ?></div>
     </div>
     <a href="/reports" class="btn btn-primary">📄 Сформувати звіт</a>
 </div>
@@ -13,16 +13,16 @@ $ticketTotal = array_sum(array_map(fn($t) => (float) $t['hours'], $ticketHours))
 ?>
 <div class="row g-3 mb-4">
     <div class="col-md-4"><div class="card h-100"><div class="card-body text-center">
-        <div class="display-6"><?= \App\Core\View::e(number_format((float)$totalHours + $ticketTotal, 2)) ?></div>
-        <div class="text-muted">годин усього<?= !empty($unitMode) ? ' (підрозділ)' : ' по всій системі' ?></div>
+        <div class="display-6"><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $totalHours + $ticketTotal)) ?></div>
+        <div class="text-muted">загалом<?= !empty($unitMode) ? ' (підрозділ)' : (!empty($managerMode) ? ' (доступні вам)' : ' по всій системі') ?></div>
     </div></div></div>
     <div class="col-md-4"><div class="card h-100"><div class="card-body text-center">
-        <div class="display-6"><?= \App\Core\View::e(number_format((float)$totalHours, 2)) ?></div>
-        <div class="text-muted">годин по задачах</div>
+        <div class="display-6"><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $totalHours)) ?></div>
+        <div class="text-muted">по задачах</div>
     </div></div></div>
     <div class="col-md-4"><div class="card h-100"><div class="card-body text-center">
-        <div class="display-6"><?= \App\Core\View::e(number_format($ticketTotal, 2)) ?></div>
-        <div class="text-muted">годин по тікетах</div>
+        <div class="display-6"><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $ticketTotal)) ?></div>
+        <div class="text-muted">по тікетах</div>
     </div></div></div>
 </div>
 
@@ -30,14 +30,14 @@ $ticketTotal = array_sum(array_map(fn($t) => (float) $t['hours'], $ticketHours))
 <div class="card mb-4">
     <div class="card-header">Час по тікетах</div>
     <table class="table table-sm mb-0 align-middle">
-        <thead><tr><th>Тікет</th><th>Черга</th><th>Записів</th><th>Годин</th></tr></thead>
+        <thead><tr><th>Тікет</th><th>Черга</th><th>Записів</th><th>Час</th></tr></thead>
         <tbody>
         <?php foreach ($ticketHours as $t): ?>
             <tr>
                 <td><a href="/tickets/<?= (int) $t['ticket_id'] ?>">#<?= (int) $t['ticket_id'] ?></a> <?= \App\Core\View::e($t['subject']) ?></td>
                 <td><?= \App\Core\View::e($t['queue_name']) ?></td>
                 <td><?= (int) $t['entries'] ?></td>
-                <td><?= \App\Core\View::e(number_format((float) $t['hours'], 2)) ?></td>
+                <td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $t['hours'])) ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
@@ -70,7 +70,7 @@ $periods = [
                 <div class="col-md-4 border-end">
                     <div class="px-3 pt-2 small text-muted text-uppercase">Загалом <span class="fw-normal">(клікніть на дату — покаже ці записи нижче)</span></div>
                     <table class="table table-sm mb-0">
-                        <thead><tr><th><?= $p['col'] ?></th><th>Годин</th></tr></thead>
+                        <thead><tr><th><?= $p['col'] ?></th><th>Час</th></tr></thead>
                         <tbody>
                         <?php foreach ($p['totals'] as $row): ?>
                             <tr>
@@ -79,7 +79,7 @@ $periods = [
                                         <?= \App\Core\View::e($row['period_label']) ?>
                                     </a>
                                 </td>
-                                <td><?= \App\Core\View::e(number_format((float)$row['total_hours'], 2)) ?></td>
+                                <td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $row['total_hours'])) ?></td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -88,7 +88,7 @@ $periods = [
                 <div class="col-md-4 border-end">
                     <div class="px-3 pt-2 small text-muted text-uppercase">По користувачах</div>
                     <table class="table table-sm mb-0">
-                        <thead><tr><th><?= $p['col'] ?></th><th>Хто</th><th>Годин</th></tr></thead>
+                        <thead><tr><th><?= $p['col'] ?></th><th>Хто</th><th>Час</th></tr></thead>
                         <tbody>
                         <?php foreach ($p['byUser'] as $row): ?>
                             <tr>
@@ -98,7 +98,7 @@ $periods = [
                                     </a>
                                 </td>
                                 <td><?= \App\Core\View::e($row['user_name']) ?></td>
-                                <td><?= \App\Core\View::e(number_format((float)$row['total_hours'], 2)) ?></td>
+                                <td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $row['total_hours'])) ?></td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -107,7 +107,7 @@ $periods = [
                 <div class="col-md-4">
                     <div class="px-3 pt-2 small text-muted text-uppercase">По проєктах</div>
                     <table class="table table-sm mb-0">
-                        <thead><tr><th><?= $p['col'] ?></th><th>Проєкт</th><th>Годин</th></tr></thead>
+                        <thead><tr><th><?= $p['col'] ?></th><th>Проєкт</th><th>Час</th></tr></thead>
                         <tbody>
                         <?php foreach ($p['byProject'] as $row): ?>
                             <tr>
@@ -117,7 +117,7 @@ $periods = [
                                     </a>
                                 </td>
                                 <td><a href="/projects/<?= (int)$row['project_id'] ?>/time"><?= \App\Core\View::e($row['project_name']) ?></a></td>
-                                <td><?= \App\Core\View::e(number_format((float)$row['total_hours'], 2)) ?></td>
+                                <td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $row['total_hours'])) ?></td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -134,14 +134,14 @@ $periods = [
     <?php if (!empty($hoursByProject)): ?>
     <div class="col-md-6 mb-4">
         <div class="card h-100">
-            <div class="card-header">Годин по кожному проєкту</div>
+            <div class="card-header">Час по кожному проєкту</div>
             <table class="table table-sm mb-0">
-                <thead><tr><th>Проєкт</th><th>Годин</th></tr></thead>
+                <thead><tr><th>Проєкт</th><th>Час</th></tr></thead>
                 <tbody>
                 <?php foreach ($hoursByProject as $row): ?>
                     <tr>
                         <td><a href="/projects/<?= (int)$row['project_id'] ?>/time"><?= \App\Core\View::e($row['project_name']) ?></a></td>
-                        <td><?= \App\Core\View::e(number_format((float)$row['total_hours'], 2)) ?></td>
+                        <td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $row['total_hours'])) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -153,14 +153,14 @@ $periods = [
     <?php if (!empty($hoursByUser)): ?>
     <div class="col-md-6 mb-4">
         <div class="card h-100">
-            <div class="card-header">Годин по кожному учаснику</div>
+            <div class="card-header">Час по кожному учаснику</div>
             <table class="table table-sm mb-0">
-                <thead><tr><th>Хто</th><th>Годин</th></tr></thead>
+                <thead><tr><th>Хто</th><th>Час</th></tr></thead>
                 <tbody>
                 <?php foreach ($hoursByUser as $row): ?>
                     <tr>
                         <td><?= \App\Core\View::e($row['user_name']) ?></td>
-                        <td><?= \App\Core\View::e(number_format((float)$row['total_hours'], 2)) ?></td>
+                        <td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $row['total_hours'])) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -187,7 +187,7 @@ $periods = [
             </div>
         <?php else: ?>
             <table class="table table-sm mb-0" id="all-records-table">
-                <thead><tr><th>Дата</th><th>Проєкт</th><th>Задача</th><th>Хто</th><th>Годин</th><th>Категорія</th></tr></thead>
+                <thead><tr><th>Дата</th><th>Проєкт</th><th>Задача</th><th>Хто</th><th>Час</th><th>Категорія</th></tr></thead>
                 <tbody>
                 <?php foreach ($timeLogs as $log): ?>
                     <?php
@@ -197,11 +197,11 @@ $periods = [
                     $monthLabel = date('m.Y', $logTimestamp);
                     ?>
                     <tr data-day="<?= \App\Core\View::e($dayLabel) ?>" data-week="<?= \App\Core\View::e($weekLabel) ?>" data-month="<?= \App\Core\View::e($monthLabel) ?>">
-                        <td><?= \App\Core\View::e($log['log_date']) ?></td>
+                        <td><?= \App\Core\View::date($log['log_date'], '') ?></td>
                         <td><a href="/projects/<?= (int)$log['project_id'] ?>"><?= \App\Core\View::e($log['project_name']) ?></a></td>
                         <td><a href="/tasks/<?= (int)$log['task_id'] ?>">#<?= (int)$log['task_id'] ?> <?= \App\Core\View::e($log['task_title']) ?></a></td>
                         <td><?= \App\Core\View::e($log['user_name']) ?></td>
-                        <td><?= \App\Core\View::e((string)$log['hours']) ?></td>
+                        <td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $log['hours'])) ?></td>
                         <td class="text-muted"><?= \App\Core\View::e($log['activity_category'] ?? '—') ?></td>
                     </tr>
                 <?php endforeach; ?>

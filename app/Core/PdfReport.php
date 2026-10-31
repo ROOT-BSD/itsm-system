@@ -72,7 +72,7 @@ class PdfReport
             $this->pdf->Rect($x + $labelWidth, $y + ($rowHeight - $barHeight) / 2, $barWidth, $barHeight, 'F');
 
             $this->pdf->SetXY($x + $labelWidth + $maxBarWidth + 2, $y);
-            $this->pdf->Cell(30, $rowHeight, number_format($row['hours'], 2) . ' год.', 0, 1);
+            $this->pdf->Cell(30, $rowHeight, \App\Core\TimeFormat::hm((float) $row['hours']), 0, 1);
         }
         $this->pdf->Ln(3);
     }
@@ -113,7 +113,7 @@ class PdfReport
             $this->pdf->SetFont('DejaVu', 'B', 9);
             $this->pdf->SetFillColor(245, 245, 245);
             $this->pdf->Cell($restWidth, 6, $group['subtotal_label'] ?? 'Витрачено на опрацювання проєкту:', 1, 0, 'R', true);
-            $this->pdf->Cell($lastColWidth, 6, number_format($group['subtotal'], 2), 1, 1, 'L', true);
+            $this->pdf->Cell($lastColWidth, 6, \App\Core\TimeFormat::hm((float) $group['subtotal']), 1, 1, 'L', true);
             $this->pdf->Ln(3);
         }
     }

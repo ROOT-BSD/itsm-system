@@ -19,8 +19,14 @@ class TaskController
     public function indexOpen(): void
     {
         Auth::requireLogin();
+        $all = Task::allOpenVisibleTo(Auth::id(), Auth::hasRole(['admin']));
+        $mine = !empty($_GET['mine']);
+        if ($mine) { // посилання з картки дашборду: лише задачі, де я виконавець
+            $all = array_values(array_filter($all, static fn(array $t): bool => (int) ($t['assignee_id'] ?? 0) === (int) Auth::id() && empty($t['is_closed'])));
+        }
         View::render('tasks/index', [
-            'tasks' => $tasks = Task::sortForDisplay(Task::allOpenVisibleTo(Auth::id(), Auth::hasRole(['admin']))),
+            'mine' => $mine,
+            'tasks' => $tasks = Task::sortForDisplay($all),
             'taskLabels' => \App\Models\TaskLabel::forTasks(array_map(fn($t) => (int) $t['id'], $tasks)),
         ]);
     }
@@ -34,7 +40,7 @@ class TaskController
         View::render('tasks/create', [
             'projectId' => $projectId,
             'types' => Task::types(),
-            'users' => User::allActive(),
+            'users' => User::selectableFor(Auth::role(), (int) Auth::id()),
             'milestones' => Milestone::forProject($projectId),
         ]);
     }
@@ -86,6 +92,12 @@ class TaskController
             }
         }
 
+        $newAssignee = !empty($_POST['assignee_id']) ? (int) $_POST['assignee_id'] : null;
+        if ($newAssignee !== null && !User::inSelectScope(Auth::role(), (int) Auth::id(), $newAssignee)) {
+            header('Location: /projects/' . $projectId . '/tasks/create?error=' . urlencode('Виконавцем можна призначити лише користувача зі свого підрозділу чи команди.'));
+            exit;
+        }
+
         // Статус "new" (id визначаємо за кодом, щоб не залежати від порядку вставки)
         $statusId = $this->statusIdByCode('new');
 
@@ -125,11 +137,23 @@ class TaskController
         }
         $this->requireProjectAccess((int) $task['project_id']);
 
+        $reviewerId = Task::reviewerId($task);
+        $reviewerName = null;
+        if ($reviewerId !== null) {
+            $rs = \App\Core\Database::connection()->prepare('SELECT full_name FROM users WHERE id = :id');
+            $rs->execute(['id' => $reviewerId]);
+            $reviewerName = $rs->fetchColumn() ?: null;
+        }
         View::render('tasks/show', [
+            'canEditTask' => Task::canEdit($task, (int) Auth::id(), Auth::role()),
+            'managerial' => $reviewerId !== null,
+            'reviewerName' => $reviewerName,
+            'canSetClosed' => Task::canSetClosed($task, (int) Auth::id(), Auth::role()),
+            'canArchive' => $reviewerId !== null && Task::archiveReady() && Task::canArchive(Auth::role()),
             'task' => $task,
             'journal' => array_map(fn($e) => $e + ['can_edit' => $this->canEditEntry($e, $task)], Task::journal((int) $task['id'])),
             'statuses' => Task::statuses(),
-            'users' => User::allActive(),
+            'users' => User::selectableFor(Auth::role(), (int) Auth::id(), (int) ($task['assignee_id'] ?? 0) ?: null),
             'milestones' => Milestone::forProject((int) $task['project_id']),
             'dateChanges' => Task::dateChanges((int) $task['id']),
             'projects' => Project::allVisibleTo(Auth::id(), Auth::hasRole(['admin'])),
@@ -160,8 +184,38 @@ class TaskController
             exit;
         }
 
+        if (($problem = Task::managerialStatusProblem((int) $params['id'], $statusId, (int) Auth::id(), Auth::role())) !== null) {
+            header('Location: /tasks/' . $params['id'] . '?error=' . urlencode($problem));
+            exit;
+        }
+
         Task::updateStatus((int) $params['id'], $statusId, Auth::id());
         header('Location: /tasks/' . $params['id']);
+        exit;
+    }
+
+    /** Закриту задачу від керівництва — в архів / назад з архіву (Керівник підрозділу, адміністратор). */
+    public function archive(array $params): void
+    {
+        Auth::requireLogin();
+        $task = $this->findTaskOrFail((int) $params['id']);
+        $archive = ($params['_action'] ?? '') !== 'unarchive';
+        $url = '/tasks/' . (int) $params['id'];
+        if (!Task::archiveReady() || !Task::canArchive(Auth::role())) {
+            header('Location: ' . $url . '?error=' . urlencode('Архівувати задачі може лише Керівник підрозділу або адміністратор'));
+            exit;
+        }
+        $row = Task::find((int) $task['id']);
+        if (!$row || !Task::isManagerial($row)) {
+            header('Location: ' . $url . '?error=' . urlencode('В архів вручну відправляються лише задачі від керівництва'));
+            exit;
+        }
+        if ($archive && empty($row['is_closed'])) {
+            header('Location: ' . $url . '?error=' . urlencode('В архів можна відправити лише закриту задачу'));
+            exit;
+        }
+        Task::setArchived((int) $task['id'], $archive, (int) Auth::id());
+        header('Location: ' . $url . '?success=' . urlencode($archive ? 'Задачу відправлено в архів' : 'Задачу повернуто з архіву'));
         exit;
     }
 
@@ -171,6 +225,10 @@ class TaskController
         $task = $this->findTaskOrFail((int) $params['id']);
 
         $assigneeId = !empty($_POST['assignee_id']) ? (int) $_POST['assignee_id'] : null;
+        if ($assigneeId !== null && !User::inSelectScope(Auth::role(), (int) Auth::id(), $assigneeId, (int) ($task['assignee_id'] ?? 0) ?: null)) {
+            header('Location: /tasks/' . $params['id'] . '?error=' . urlencode('Виконавцем можна призначити лише користувача зі свого підрозділу чи команди.'));
+            exit;
+        }
         Task::updateAssignee((int) $params['id'], $assigneeId, Auth::id());
         header('Location: /tasks/' . $params['id']);
         exit;
@@ -285,6 +343,9 @@ class TaskController
         $assignee = !empty($_POST['assignee_id']) ? (int) $_POST['assignee_id'] : null;
         if ($assignee !== null && !User::findById($assignee)) {
             $this->back($task['id'], 'error', 'Виконавця не знайдено');
+        }
+        if ($assignee !== null && !User::inSelectScope(Auth::role(), (int) Auth::id(), $assignee)) {
+            $this->back($task['id'], 'error', 'Виконавцем можна призначити лише користувача зі свого підрозділу чи команди.');
         }
 
         $id = Task::create([
@@ -602,7 +663,7 @@ class TaskController
     public function addComment(array $params): void
     {
         Auth::requireLogin();
-        $task = $this->findTaskOrFail((int) $params['id']);
+        $task = $this->findTaskOrFail((int) $params['id'], false);
         $f = $this->readEntryForm((int) $task['id']);
         if ($f['text'] === '' && $f['hours'] <= 0) {
             $this->journalBack((int) $task['id'], null, 'Напишіть, що зроблено, і/або вкажіть витрачений час.');
@@ -667,7 +728,7 @@ class TaskController
     public function previewEntry(array $params): void
     {
         Auth::requireLogin();
-        $task = $this->findTaskOrFail((int) $params['id']);
+        $task = $this->findTaskOrFail((int) $params['id'], false);
         header('Content-Type: text/html; charset=UTF-8');
         $body = (string) ($_POST['body'] ?? '');
         if (trim($body) === '') {
@@ -713,7 +774,7 @@ class TaskController
     }
 
     /** Знаходить задачу і перевіряє видимість її проєкту, інакше завершує запит 404/403. */
-    private function findTaskOrFail(int $taskId): array
+    private function findTaskOrFail(int $taskId, bool $write = true): array
     {
         $task = Task::find($taskId);
         if (!$task) {
@@ -722,6 +783,10 @@ class TaskController
             exit;
         }
         $this->requireProjectAccess((int) $task['project_id']);
+        if ($write && !Task::canEdit($task, (int) Auth::id(), Auth::role())) {
+            header('Location: /tasks/' . $taskId . '?error=' . urlencode('Керівник відділу керує лише задачами своєї команди; ця задача — лише для перегляду.'));
+            exit;
+        }
         return $task;
     }
 

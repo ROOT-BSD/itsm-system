@@ -131,6 +131,8 @@ $router->get('/projects/{project_id}/tasks/create', fn($p) => $tasks->showCreate
 $router->post('/projects/{project_id}/tasks', fn($p) => $tasks->store($p));
 $router->get('/tasks/{id}', fn($p) => $tasks->show($p));
 $router->post('/tasks/{id}/status', fn($p) => $tasks->updateStatus($p));
+$router->post('/tasks/{id}/archive', fn($p) => $tasks->archive($p));
+$router->post('/tasks/{id}/unarchive', fn($p) => $tasks->archive($p + ['_action' => 'unarchive']));
 $router->post('/tasks/{id}/dates', fn($p) => $tasks->updateDates($p));
 $router->post('/tasks/{id}/schedule', fn($p) => $tasks->updateSchedule($p));
 $router->post('/tasks/{id}/milestone', fn($p) => $tasks->updateMilestone($p));
@@ -393,6 +395,15 @@ $router->get('/unit/board', function () {
 $router->get('/unit/gantt', function () {
     (new \App\Controllers\UnitController())->gantt();
 });
+// --- Команда Керівника відділу (роль dept_head, міграція 063) ---
+$router->get('/team/tickets-report', fn() => (new \App\Controllers\TeamController())->ticketsReport());
+$router->get('/team/tickets-report/export', fn() => (new \App\Controllers\ExportController())->teamTicketsReport());
+$router->get('/team', fn() => (new \App\Controllers\TeamController())->index());
+$router->get('/team/{id}', fn($p) => (new \App\Controllers\TeamController())->show($p));
+$router->post('/team/{id}/add', fn($p) => (new \App\Controllers\TeamController())->add($p));
+$router->post('/team/{id}/remove', fn($p) => (new \App\Controllers\TeamController())->remove($p));
+$router->post('/team/{id}/superior', fn($p) => (new \App\Controllers\TeamController())->superior($p));
+$router->get('/manager/time', fn() => (new \App\Controllers\ManagerController())->time());
 $router->get('/unit/time', function () {
     (new \App\Controllers\UnitController())->time();
 });

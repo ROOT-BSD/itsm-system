@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Core\Database;
+use App\Core\Team;
 use App\Core\Unit;
 use App\Services\NotificationService;
 
@@ -156,28 +157,28 @@ class Project
         }
         // Адміністратор підрозділу додатково бачить проєкти, де автор, відповідальний або учасник — з його AD OU.
         $unitParts = [];
-        if (($c = Unit::userCondition("{$table}.created_by", "{$prefix}ua", $userId)) !== null) {
+        if (($c = Team::scopeCondition("{$table}.created_by", "{$prefix}ua", $userId)) !== null) {
             $unitParts[] = $c[0];
             $params += $c[1];
         }
-        if (($c = Unit::userCondition("{$table}.responsible_user_id", "{$prefix}ub", $userId)) !== null) {
+        if (($c = Team::scopeCondition("{$table}.responsible_user_id", "{$prefix}ub", $userId)) !== null) {
             $unitParts[] = $c[0];
             $params += $c[1];
         }
         if (self::membersTableExists()
-            && ($c = Unit::userCondition("pmu_{$prefix}.user_id", "{$prefix}uc", $userId)) !== null) {
+            && ($c = Team::scopeCondition("pmu_{$prefix}.user_id", "{$prefix}uc", $userId)) !== null) {
             $unitParts[] = "EXISTS (SELECT 1 FROM project_members pmu_{$prefix} WHERE pmu_{$prefix}.project_id = {$table}.id AND {$c[0]})";
             $params += $c[1];
         }
         // …а також проєкти, де людина підрозділу — виконавець чи автор хоча б однієї задачі або вела облік часу:
         // «показувати все, що стосується підрозділу» (канбан, Гант, облік часу працюють через видимість проєкту).
-        $ca = Unit::userCondition("tu_{$prefix}.assignee_id", "{$prefix}ud", $userId);
-        $cb = Unit::userCondition("tu_{$prefix}.author_id", "{$prefix}ue", $userId);
+        $ca = Team::scopeCondition("tu_{$prefix}.assignee_id", "{$prefix}ud", $userId);
+        $cb = Team::scopeCondition("tu_{$prefix}.author_id", "{$prefix}ue", $userId);
         if ($ca !== null && $cb !== null) {
             $unitParts[] = "EXISTS (SELECT 1 FROM tasks tu_{$prefix} WHERE tu_{$prefix}.project_id = {$table}.id AND ({$ca[0]} OR {$cb[0]}))";
             $params += $ca[1] + $cb[1];
         }
-        $cc = Unit::userCondition("tl_{$prefix}.user_id", "{$prefix}uf", $userId);
+        $cc = Team::scopeCondition("tl_{$prefix}.user_id", "{$prefix}uf", $userId);
         if ($cc !== null) {
             $unitParts[] = "EXISTS (SELECT 1 FROM time_logs tl_{$prefix} JOIN tasks tk_{$prefix} ON tk_{$prefix}.id = tl_{$prefix}.task_id"
                 . " WHERE tk_{$prefix}.project_id = {$table}.id AND {$cc[0]})";
@@ -219,7 +220,7 @@ class Project
         }
         // Адміністратор підрозділу і доступ, успадкований від батьківського проєкту: те саме правило, що й у списках
         // (accessCondition) — одне джерело істини.
-        if (Unit::scopeOu($userId) !== null || !empty($project['parent_id'])) {
+        if (Team::hasScope($userId) || !empty($project['parent_id'])) {
             [$accessSql, $accessParams] = self::accessCondition('p', 'iv', $userId);
             $stmt = Database::connection()->prepare("SELECT 1 FROM projects p WHERE p.id = :pid AND {$accessSql}");
             $stmt->execute($accessParams + ['pid' => (int) $project['id']]);

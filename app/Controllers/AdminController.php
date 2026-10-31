@@ -128,7 +128,11 @@ class AdminController
         // стандартного контейнера CN=Users) — останньою групою, щоб справжні OU були на видноті.
         $groups = [];
         foreach ($adUsers as $u) {
-            $ou = (string) ($u['ad_ou'] ?? '');
+            // ручно вказаний підрозділ (unit_ou) має пріоритет над OU із синхронізації
+            $ou = trim((string) ($u['unit_ou'] ?? '')) !== '' ? trim((string) $u['unit_ou']) : (string) ($u['ad_ou'] ?? '');
+            if (trim((string) ($u['unit_ou'] ?? '')) === '') {
+                $groups[$ou]['has_ad'] = true; // група з OU із AD — згорнута; з підрозділом, заданим вручну, — розгорнута
+            }
             $groups[$ou]['label'] = LdapDn::ouLabel($ou);
             $groups[$ou]['users'][] = $u;
         }
@@ -140,8 +144,37 @@ class AdminController
             return mb_strtolower($a['label']) <=> mb_strtolower($b['label']);
         });
 
+        // Локальні з підрозділом (unit_ou) потрапляють у ту саму групу, що й AD-користувачі цього підрозділу.
+        $plainLocal = [];
+        foreach ($localUsers as $u) {
+            $unit = trim((string) ($u['unit_ou'] ?? ''));
+            if ($unit === '') {
+                $plainLocal[] = $u;
+                continue;
+            }
+            $label = LdapDn::ouLabel($unit);
+            $found = false;
+            foreach ($adGroups as &$g) {
+                if ($g['label'] === $label) {
+                    $g['users'][] = $u;
+                    $found = true;
+                    break;
+                }
+            }
+            unset($g);
+            if (!$found) {
+                $adGroups[] = ['label' => $label, 'users' => [$u], 'has_ad' => false];
+            }
+        }
+        usort($adGroups, function (array $a, array $b): int {
+            if ($a['label'] === '' || $b['label'] === '') {
+                return ($a['label'] === '') <=> ($b['label'] === '');
+            }
+            return mb_strtolower($a['label']) <=> mb_strtolower($b['label']);
+        });
+
         View::render('admin/users', [
-            'localUsers' => $localUsers,
+            'localUsers' => $plainLocal,
             'adGroups' => $adGroups,
             'error' => $_GET['error'] ?? null,
             'success' => $_GET['success'] ?? null,
@@ -193,7 +226,7 @@ class AdminController
             User::setUnitOu($newId, $unit);
         }
         Audit::log('user', $newId, 'created_by_admin', Auth::id(), $unit !== '' ? ['unit_ou' => LdapDn::ouLabel($unit)] : null);
-        $this->redirectUsers('success', 'Користувача "' . $fullName . '" створено');
+        $this->redirectUsers('success', 'Користувача "' . $fullName . '" створено', (int) $newId);
     }
 
     private function redirectCreateUser(string $message): void
@@ -247,7 +280,7 @@ class AdminController
 
         // Підрозділ — лише для локальних користувачів (в AD-користувача він приходить із синхронізації).
         $unit = null;
-        if ($current && $current['auth_source'] === 'local' && \App\Core\Unit::localReady() && isset($_POST['unit_ou'])) {
+        if ($current && \App\Core\Unit::localReady() && isset($_POST['unit_ou'])) {
             $unit = LdapDn::fromInput((string) $_POST['unit_ou']);
             if ($unit === null) {
                 header("Location: /admin/users/{$userId}/edit?error=" . urlencode('Некоректний підрозділ. Вкажіть назви від найбільшого до найменшого через «›», наприклад: Київ › ІТ'));
@@ -272,7 +305,7 @@ class AdminController
             }
         }
         Audit::log('user', $userId, 'updated_by_admin', Auth::id(), $audit ?: null);
-        $this->redirectUsers('success', 'Дані користувача оновлено');
+        $this->redirectUsers('success', 'Дані користувача оновлено', $userId);
     }
 
     public function deleteUser(array $params): void
@@ -280,7 +313,7 @@ class AdminController
         $userId = (int) $params['id'];
 
         if ($userId === Auth::id()) {
-            $this->redirectUsers('error', 'Не можна видалити власний обліковий запис');
+            $this->redirectUsers('error', 'Не можна видалити власний обліковий запис', $userId);
             return;
         }
 
@@ -297,7 +330,8 @@ class AdminController
                 'error',
                 'Неможливо видалити "' . $user['full_name'] . '" — з ним пов\'язані дані '
                 . '(створені проєкти, задачі, коментарі або облік часу). '
-                . 'Використайте деактивацію замість видалення, щоб зберегти історію.'
+                . 'Використайте деактивацію замість видалення, щоб зберегти історію.',
+                $userId
             );
             return;
         }
@@ -313,25 +347,25 @@ class AdminController
         $confirmPassword = $_POST['confirm_password'] ?? '';
 
         if (strlen($newPassword) < 8) {
-            $this->redirectUsers('error', 'Пароль має містити щонайменше 8 символів');
+            $this->redirectUsers('error', 'Пароль має містити щонайменше 8 символів', $userId);
             return;
         }
 
         if ($newPassword !== $confirmPassword) {
-            $this->redirectUsers('error', 'Паролі не збігаються');
+            $this->redirectUsers('error', 'Паролі не збігаються', $userId);
             return;
         }
 
         $ok = User::updatePassword($userId, $newPassword);
 
         if (!$ok) {
-            $this->redirectUsers('error', 'Не вдалося змінити пароль (можливо, обліковий запис автентифікується через AD)');
+            $this->redirectUsers('error', 'Не вдалося змінити пароль (можливо, обліковий запис автентифікується через AD)', $userId);
             return;
         }
 
         \App\Models\UserSession::revokeAllFor($userId, 'password', Auth::id());
         Audit::log('user', $userId, 'password_changed_by_admin', Auth::id());
-        $this->redirectUsers('success', 'Пароль користувача оновлено');
+        $this->redirectUsers('success', 'Пароль користувача оновлено', $userId);
     }
 
     public function toggleActive(array $params): void
@@ -340,7 +374,7 @@ class AdminController
         $active = ($_POST['active'] ?? '1') === '1';
 
         if ($userId === Auth::id()) {
-            $this->redirectUsers('error', 'Не можна деактивувати власний обліковий запис');
+            $this->redirectUsers('error', 'Не можна деактивувати власний обліковий запис', $userId);
             return;
         }
 
@@ -352,12 +386,13 @@ class AdminController
             User::setAdBlocked($userId, !$active);
         }
         Audit::log('user', $userId, $active ? 'activated_by_admin' : 'deactivated_by_admin', Auth::id());
-        $this->redirectUsers('success', $active ? 'Обліковий запис активовано' : 'Обліковий запис деактивовано');
+        $this->redirectUsers('success', $active ? 'Обліковий запис активовано' : 'Обліковий запис деактивовано', $userId);
     }
 
-    private function redirectUsers(string $key, string $message): void
+    /** $focusId — користувач, до якого сторінка повертає фокус (якір #u<id>; група підрозділу розгортається скриптом). */
+    private function redirectUsers(string $key, string $message, ?int $focusId = null): void
     {
-        header('Location: /admin/users?' . $key . '=' . urlencode($message));
+        header('Location: /admin/users?' . $key . '=' . urlencode($message) . ($focusId ? '#u' . $focusId : ''));
         exit;
     }
 
@@ -510,7 +545,7 @@ class AdminController
         User::resetFailedLogins($userId);
         Audit::log('user', $userId, 'unlocked_by_admin', Auth::id());
 
-        header('Location: /admin/users?success=' . urlencode('Блокування знято для "' . $user['full_name'] . '"'));
+        header('Location: /admin/users?success=' . urlencode('Блокування знято для "' . $user['full_name'] . '"') . '#u' . (int) $user['id']);
         exit;
     }
 

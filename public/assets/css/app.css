@@ -293,3 +293,26 @@
 /* Журнал робіт: Markdown-текст запису — без зайвого відступу знизу й із помірними заголовками */
 .journal-text > :last-child { margin-bottom: 0; }
 .journal-text h1, .journal-text h2, .journal-text h3, .journal-text h4 { font-size: 1.05rem; margin-top: .8rem; margin-bottom: .4rem; border-bottom: 0; padding-bottom: 0; }
+
+/* Сторінка «Користувачі»: назви груп підрозділів через одну відтінені (світлий / сірий) для кращого читання списку. */
+details.users-group > summary.users-group-title { background-color: #ffffff; cursor: pointer; }
+details.users-group:nth-of-type(odd) > summary.users-group-title { background-color: #ced4da; }
+details.users-group:nth-of-type(even) > summary.users-group-title { background-color: #ffffff; }
+details.users-group > summary.users-group-title:hover { background-color: #adb5bd; }
+
+/* Кнопка згортання блоку «Доступ до проєкту» */
+#project-access-toggle .when-closed { display: none; }
+#project-access-toggle.is-collapsed .when-open { display: none; }
+#project-access-toggle.is-collapsed .when-closed { display: inline; }
+
+/* Закрита задача від керівництва, що чекає архівування */
+tr.task-struck td { color: #6c757d; }
+tr.task-struck td, tr.task-struck td a { text-decoration: line-through; }
+
+/* Дерево підпорядкування (/team) */
+ul.team-tree { list-style: none; margin: 0; padding-left: 1.4rem; border-left: 1px dashed #adb5bd; }
+ul.team-tree-root { padding-left: 0; border-left: 0; }
+ul.team-tree li { margin: .25rem 0; }
+ul.team-tree summary { cursor: pointer; }
+ul.team-tree .team-node-name { font-weight: 600; }
+ul.team-tree li.team-leaf { padding-left: 1.1rem; }

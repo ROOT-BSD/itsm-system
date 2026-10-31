@@ -78,7 +78,7 @@ class ReportScheduleService
             Task::timeLogsFilteredReport($from, $to, $filters, $uid, $isAdmin),
             TicketTimeLog::reportRows($from, $to, $filters, $uid, (string) ($s['owner_role'] ?? ''))
         );
-        $lines = ["Період: {$label} ({$from} — {$to})", "Проєкт: {$projectLabel}", 'Користувач: ' . ($s['log_user_name'] ?: 'усі користувачі')];
+        $lines = ["Період: {$label} (" . \App\Core\TimeFormat::date($from) . " — " . \App\Core\TimeFormat::date($to) . ")", "Проєкт: {$projectLabel}", 'Користувач: ' . ($s['log_user_name'] ?: 'усі користувачі')];
         if (!empty($s['category'])) {
             $lines[] = 'Категорія: ' . $s['category'];
         }
@@ -118,7 +118,7 @@ class ReportScheduleService
         $pdf->userChart($chart);
         $columns = [
             ['header' => 'Дата', 'width' => 22], ['header' => 'Задача', 'width' => 60], ['header' => 'Користувач', 'width' => 40],
-            ['header' => 'Категорія', 'width' => 33], ['header' => 'Годин', 'width' => 25],
+            ['header' => 'Категорія', 'width' => 28], ['header' => 'Час', 'width' => 30],
         ];
         $groups = [];
         foreach ($rows as $r) {
@@ -126,8 +126,8 @@ class ReportScheduleService
             $isTicket = ($r['kind'] ?? 'task') === 'ticket';
             $groups[$pid] ??= ['project_name' => $r['project_name'], 'rows' => [], 'subtotal' => 0.0]
                 + ($isTicket ? ['title' => $r['project_name'], 'subtotal_label' => 'Витрачено на тікети цієї черги:'] : []);
-            $groups[$pid]['rows'][] = [$r['log_date'], mb_strimwidth($r['task_title'], 0, 30, '…'), mb_strimwidth($r['user_name'], 0, 20, '…'),
-                mb_strimwidth($r['activity_category'] ?? '—', 0, 16, '…'), number_format((float) $r['hours'], 2)];
+            $groups[$pid]['rows'][] = [\App\Core\TimeFormat::date((string) $r['log_date']), mb_strimwidth($r['task_title'], 0, 30, '…'), mb_strimwidth($r['user_name'], 0, 20, '…'),
+                mb_strimwidth($r['activity_category'] ?? '—', 0, 16, '…'), \App\Core\TimeFormat::hm((float) $r['hours'])];
             $groups[$pid]['subtotal'] += (float) $r['hours'];
         }
         uasort($groups, fn($a, $b) => $b['subtotal'] <=> $a['subtotal']);
@@ -146,11 +146,11 @@ class ReportScheduleService
         }
         if ($byTicket) {
             uasort($byTicket, fn($a, $b) => $b['hours'] <=> $a['hours']);
-            $pdf->table('Час по тікетах', [['header' => 'Тікет', 'width' => 150], ['header' => 'Годин', 'width' => 30]],
-                array_map(fn($t) => [$t['title'], number_format($t['hours'], 2)], array_values($byTicket)));
+            $pdf->table('Час по тікетах', [['header' => 'Тікет', 'width' => 146], ['header' => 'Час', 'width' => 34]],
+                array_map(fn($t) => [$t['title'], \App\Core\TimeFormat::hm((float) $t['hours'])], array_values($byTicket)));
         }
-        $pdf->heading('Разом: ' . number_format($taskHours + $ticketHours, 2) . ' год.' . ($byTicket
-            ? ' (задачі: ' . number_format($taskHours, 2) . '; тікети: ' . number_format($ticketHours, 2) . ')' : ''));
+        $pdf->heading('Разом: ' . \App\Core\TimeFormat::hm((float) $taskHours + $ticketHours) . ($byTicket
+            ? ' (задачі: ' . \App\Core\TimeFormat::hm((float) $taskHours) . '; тікети: ' . \App\Core\TimeFormat::hm((float) $ticketHours) . ')' : ''));
         return $pdf;
     }
 
@@ -163,8 +163,8 @@ class ReportScheduleService
         if ($format === 'pdf') {
             return ['name' => $baseName . '.pdf', 'mime' => 'application/pdf', 'data' => self::pdf($rows, $filterLines)->toString()];
         }
-        $headers = ['Дата', 'Тип', 'Проєкт / черга', 'Задача / тікет', 'Користувач', 'Категорія', 'Годин'];
-        $table = array_map(fn($r) => [$r['log_date'], ($r['kind'] ?? 'task') === 'ticket' ? 'Тікет' : 'Задача', $r['project_name'], $r['task_title'], $r['user_name'], $r['activity_category'] ?? '', round((float) $r['hours'], 2)], $rows);
+        $headers = ['Дата', 'Тип', 'Проєкт / черга', 'Задача / тікет', 'Користувач', 'Категорія', 'Час'];
+        $table = array_map(fn($r) => [\App\Core\TimeFormat::date((string) $r['log_date']), ($r['kind'] ?? 'task') === 'ticket' ? 'Тікет' : 'Задача', $r['project_name'], $r['task_title'], $r['user_name'], $r['activity_category'] ?? '', \App\Core\TimeFormat::hm((float) $r['hours'])], $rows);
         if ($format === 'csv') {
             return ['name' => $baseName . '.csv', 'mime' => 'text/csv; charset=utf-8', 'data' => TableExport::csv($headers, $table)];
         }
@@ -225,7 +225,7 @@ class ReportScheduleService
         $subject = '[ITSM] ' . $s['name'] . ' — ' . $att['label'];
         $tickets = ($s['report_type'] ?? 'time') === 'tickets';
         $body = ($tickets ? 'Звіт по тікетах' : 'Звіт з обліку часу') . " за розкладом «{$s['name']}» ({$att['label']}).\n"
-            . ($att['rows'] > 0 ? ($tickets ? "Тікетів: {$att['rows']}, витрачено годин: " : "Записів: {$att['rows']}, годин: ") . number_format($att['hours'], 2) . ".\n"
+            . ($att['rows'] > 0 ? ($tickets ? "Тікетів: {$att['rows']}, витрачено часу: " : "Записів: {$att['rows']}, часу: ") . \App\Core\TimeFormat::hm((float) $att['hours']) . ".\n"
                 : ($tickets ? "За цей період тікетів немає.\n" : "За цей період записів обліку часу немає.\n"))
             . "Файл — у вкладенні.\n\nЛист сформовано автоматично. Керувати розкладами: " . rtrim(Setting::appUrl(), '/') . "/reports/schedules\n";
         $failed = [];

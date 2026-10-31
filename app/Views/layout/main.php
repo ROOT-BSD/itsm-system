@@ -31,6 +31,12 @@ use App\Core\Auth;
                 <?php foreach (\App\Models\MenuPrefs::visibleItems(Auth::role(), (int) Auth::id()) as $mHref => $mLabel): ?>
                 <li class="nav-item"><a class="nav-link" href="<?= $mHref ?>"><?= $mLabel ?></a></li>
                 <?php endforeach; ?>
+                <?php if (\App\Core\Access::canViewManagerTime(Auth::role())): ?>
+                <li class="nav-item"><a class="nav-link" href="/manager/time">Облік часу</a></li>
+                <?php endif; ?>
+                <?php if (\App\Core\Access::isDeptHead(Auth::role()) || \App\Core\Access::canManageTeams(Auth::role())): ?>
+                <li class="nav-item"><a class="nav-link" href="/team"><?= \App\Core\Access::isDeptHead(Auth::role()) ? 'Моя команда' : 'Відділи' ?></a></li>
+                <?php endif; ?>
                 <?php if (\App\Core\Access::isUnitAdmin(Auth::role())): ?>
                 <li class="nav-item"><a class="nav-link<?= \App\Core\UnitNav::currentSection() !== null ? ' active' : '' ?>" href="/unit">Мій підрозділ</a></li>
                 <?php endif; ?>

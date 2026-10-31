@@ -15,7 +15,10 @@
 
 <div class="card mb-4">
     <div class="card-body">
-        <h3><?= \App\Core\View::e($task['title']) ?> <small class="text-muted">#<?= (int)$task['id'] ?></small></h3>
+        <?php if (isset($canEditTask) && !$canEditTask): ?>
+<div class="alert alert-info py-2">Ця задача не належить вашій команді — вона доступна <strong>лише для перегляду</strong> (можна залишати записи в журналі). Керувати можна задачами своїх підлеглих.</div>
+<?php endif; ?>
+<h3><?= \App\Core\View::e($task['title']) ?> <small class="text-muted">#<?= (int)$task['id'] ?></small></h3>
         <?php if (!empty($allLabels)): $__have = array_map('intval', array_column($taskLabels ?? [], 'id')); ?>
         <form method="post" action="/tasks/<?= (int)$task['id'] ?>/labels" class="d-flex flex-wrap gap-2 align-items-center mb-2">
             <?= \App\Core\Csrf::field() ?>
@@ -54,7 +57,7 @@
         </details>
 
         <?php if (\App\Models\Task::isOverdue($task)): ?>
-            <div class="alert alert-danger py-2">⚠️ Прострочено термін виконання (мав бути готовий до <?= \App\Core\View::e($task['due_date']) ?>)</div>
+            <div class="alert alert-danger py-2">⚠️ Прострочено термін виконання (мав бути готовий до <?= \App\Core\View::date($task['due_date'], '') ?>)</div>
         <?php endif; ?>
 
         <table class="table table-sm w-auto">
@@ -74,12 +77,12 @@
                     $days = (int) round((strtotime($cur) - strtotime($orig)) / 86400);
                     $shift = ' <span class="badge ' . ($days > 0 ? 'bg-danger' : 'bg-success') . '">' . ($days > 0 ? '+' : '') . $days . ' дн.</span>';
                 }
-                return '<div class="small text-muted">початково: ' . \App\Core\View::e($orig) . $shift . '</div>';
+                return '<div class="small text-muted">початково: ' . \App\Core\View::date($orig) . $shift . '</div>';
             };
             ?>
-            <tr><th>Дата початку</th><td><?= \App\Core\View::e($task['start_date'] ?? '—') ?><?= $planned($task['planned_start_date'] ?? null, $task['start_date'] ?? null) ?></td></tr>
-            <tr><th>Термін</th><td><?= \App\Core\View::e($task['due_date'] ?? '—') ?><?= $planned($task['planned_due_date'] ?? null, $task['due_date'] ?? null) ?></td></tr>
-            <tr><th>Витрачено годин</th><td><?= \App\Core\View::e((string)$task['actual_hours']) ?></td></tr>
+            <tr><th>Дата початку</th><td><?= \App\Core\View::date($task['start_date'], '—') ?><?= $planned($task['planned_start_date'] ?? null, $task['start_date'] ?? null) ?></td></tr>
+            <tr><th>Термін</th><td><?= \App\Core\View::date($task['due_date'], '—') ?><?= $planned($task['planned_due_date'] ?? null, $task['due_date'] ?? null) ?></td></tr>
+            <tr><th>Витрачено часу</th><td><?= \App\Core\View::e(\App\Core\TimeFormat::hm((float) $task['actual_hours'])) ?></td></tr>
         </table>
 
         <details class="mb-3">
@@ -112,8 +115,8 @@
                         <tr>
                             <td class="text-nowrap"><?= \App\Core\View::e(date('d.m.Y H:i', strtotime($c['created_at']))) ?></td>
                             <td><?= \App\Core\View::e($c['user_name'] ?? '—') ?></td>
-                            <td class="text-nowrap"><?= \App\Core\View::e($c['old_start_date'] ?? '—') ?> → <?= \App\Core\View::e($c['new_start_date'] ?? '—') ?></td>
-                            <td class="text-nowrap"><?= \App\Core\View::e($c['old_due_date'] ?? '—') ?> → <?= \App\Core\View::e($c['new_due_date'] ?? '—') ?></td>
+                            <td class="text-nowrap"><?= \App\Core\View::date($c['old_start_date'], '—') ?> → <?= \App\Core\View::date($c['new_start_date'], '—') ?></td>
+                            <td class="text-nowrap"><?= \App\Core\View::date($c['old_due_date'], '—') ?> → <?= \App\Core\View::date($c['new_due_date'], '—') ?></td>
                             <td><?= \App\Core\View::e($c['reason'] ?? '') ?></td>
                         </tr>
                     <?php endforeach; ?>
@@ -153,12 +156,29 @@
     <?= \App\Core\Csrf::field() ?>
             <label class="form-label mb-0">Статус:</label>
             <select name="status_id" class="form-select w-auto">
-                <?php foreach ($statuses as $s): ?>
-                    <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === (int)$task['status_id']) ? 'selected' : '' ?>><?= \App\Core\View::e($s['name']) ?></option>
+                <?php foreach ($statuses as $s):
+                    $lockedClosed = !empty($managerial) && empty($canSetClosed) && ((int)$s['is_closed'] !== (int)$task['is_closed']); ?>
+                    <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === (int)$task['status_id']) ? 'selected' : '' ?><?= $lockedClosed ? ' disabled' : '' ?>><?= \App\Core\View::e($s['name']) ?></option>
                 <?php endforeach; ?>
             </select>
             <button class="btn btn-sm btn-outline-primary" type="submit">Оновити</button>
         </form>
+        <?php if (!empty($managerial)): ?>
+            <p class="small text-muted mb-2">Задача від керівництва: виконавець ставить «Вирішена», а <strong>«Закрита»</strong> після перевірки ставить
+                <?= $reviewerName ? '<strong>' . \App\Core\View::e($reviewerName) . '</strong>' : 'керівник' ?>.
+                <?php if (!empty($task['is_archived'])): ?><span class="badge bg-secondary">в архіві</span><?php endif; ?></p>
+            <?php if (!empty($canArchive) && !empty($task['is_closed']) && empty($task['is_archived'])): ?>
+                <form method="post" action="/tasks/<?= (int)$task['id'] ?>/archive" class="mb-2" data-confirm="Відправити закриту задачу в архів? Вона зникне зі списків і буде в розділі «Архів».">
+                    <?= \App\Core\Csrf::field() ?>
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">📦 В архів</button>
+                </form>
+            <?php elseif (!empty($canArchive) && !empty($task['is_archived'])): ?>
+                <form method="post" action="/tasks/<?= (int)$task['id'] ?>/unarchive" class="mb-2">
+                    <?= \App\Core\Csrf::field() ?>
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">↩ Повернути з архіву</button>
+                </form>
+            <?php endif; ?>
+        <?php endif; ?>
 
         <form method="post" action="/tasks/<?= (int)$task['id'] ?>/project" class="d-flex gap-2 align-items-center mb-3">
             <?= \App\Core\Csrf::field() ?>
@@ -293,7 +313,7 @@ $stPct = $stTotal > 0 ? (int) round($stDone / $stTotal * 100) : 0;
                         <td<?= (int)$s['is_closed'] === 1 ? ' class="text-decoration-line-through"' : '' ?>><?= \App\Core\View::e($s['title']) ?></td>
                         <td><span class="badge bg-secondary"><?= \App\Core\View::e($s['status_name']) ?></span></td>
                         <td><?= \App\Core\View::e($s['assignee_name'] ?? '—') ?></td>
-                        <td><?= \App\Core\View::e($s['due_date'] ?? '—') ?></td>
+                        <td><?= \App\Core\View::date($s['due_date'], '—') ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>

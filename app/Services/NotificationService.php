@@ -62,6 +62,141 @@ class NotificationService
         }
     }
 
+    // ---------- Дії підлеглих → Керівнику відділу ----------
+
+    /**
+     * Сповіщення Керівнику відділу про подію з його підлеглим $subId (центр — завжди, лист — за відповідним перемикачем).
+     * Не сповіщається той, хто сам зробив дію, і сам підлеглий; $skipIds — уже сповіщені інакше.
+     */
+    private static function headEvent(int $subId, int $actingUserId, string $title, string $body, string $url, string $category, bool $mail, array $skipIds = []): void
+    {
+        try {
+            $head = \App\Core\Team::nearestHead($subId);
+            if ($head === null || $head === $actingUserId || $head === $subId || in_array($head, $skipIds, true)) {
+                return;
+            }
+            self::center($head, $title, $body, $url, $category);
+            if (!$mail) {
+                return;
+            }
+            $user = User::findById($head);
+            if (!$user || !$user['is_active'] || empty($user['email'])) {
+                return;
+            }
+            $text = "Доброго дня, {$user['full_name']}!\n\n{$title}.\n{$body}\n\nПереглянути:\n" . Setting::appUrl() . $url . "\n\nЦе автоматичне повідомлення.";
+            MailerService::send($user['email'], $user['full_name'], $title, $text);
+        } catch (\Throwable) {
+        }
+    }
+
+    private static function subordinateName(int $userId): string
+    {
+        $u = User::findById($userId);
+        return $u ? (string) $u['full_name'] : ('користувач №' . $userId);
+    }
+
+    /** Підлеглий вирішив/закрив задачу (виконавець — підлеглий). */
+    public static function subordinateTaskStatus(int $taskId, string $step, int $actingUserId): void
+    {
+        try {
+            $task = \App\Models\Task::find($taskId);
+            if (!$task || empty($task['assignee_id'])) {
+                return;
+            }
+            $sub = (int) $task['assignee_id'];
+            $skip = [];
+            if ($step === 'resolved' && ($rev = \App\Models\Task::reviewerId($task)) !== null) {
+                $skip[] = $rev; // перевіряючого вже сповіщено окремо (taskReviewStep)
+            }
+            self::headEvent(
+                $sub, $actingUserId,
+                $step === 'resolved' ? 'Підлеглий вирішив задачу' : 'Задачу підлеглого закрито',
+                self::subordinateName($sub) . ': «' . $task['title'] . '» (проєкт «' . $task['project_name'] . '»)',
+                '/tasks/' . $taskId, 'tasks', self::tasksEnabled(), $skip
+            );
+        } catch (\Throwable) {
+        }
+    }
+
+    /** Підлеглому призначено задачу. */
+    private static function subordinateTaskAssigned(int $taskId, ?int $assigneeId, int $actingUserId): void
+    {
+        if (!$assigneeId) {
+            return;
+        }
+        try {
+            if ($task = \App\Models\Task::find($taskId)) {
+                self::headEvent($assigneeId, $actingUserId, 'Підлеглому призначено задачу',
+                    self::subordinateName($assigneeId) . ': «' . $task['title'] . '» (проєкт «' . $task['project_name'] . '»)',
+                    '/tasks/' . $taskId, 'tasks', self::tasksEnabled());
+            }
+        } catch (\Throwable) {
+        }
+    }
+
+    /** Підлеглому призначено тікет (оператор). */
+    public static function subordinateTicketAssigned(int $ticketId, int $operatorId, int $actingUserId): void
+    {
+        try {
+            if ($t = Ticket::find($ticketId)) {
+                self::headEvent($operatorId, $actingUserId, 'Підлеглому призначено тікет',
+                    self::subordinateName($operatorId) . ': №' . $ticketId . ' «' . $t['subject'] . '»',
+                    '/tickets/' . $ticketId, 'tickets', self::ticketsEnabled());
+            }
+        } catch (\Throwable) {
+        }
+    }
+
+    /** Підлеглий-оператор залишив коментар у тікеті. */
+    private static function subordinateTicketComment(int $ticketId, ?int $authorId): void
+    {
+        if (!$authorId) {
+            return;
+        }
+        try {
+            if ($t = Ticket::find($ticketId)) {
+                self::headEvent((int) $authorId, (int) $authorId, 'Підлеглий залишив коментар у тікеті',
+                    self::subordinateName((int) $authorId) . ': №' . $ticketId . ' «' . $t['subject'] . '»',
+                    '/tickets/' . $ticketId, 'tickets', self::ticketsEnabled());
+            }
+        } catch (\Throwable) {
+        }
+    }
+
+    /**
+     * Прострочені задачі підлеглих — Керівнику відділу (раз на задачу, нагадування head_overdue; запускається разом із
+     * нагадуваннями про терміни). Центр — завжди, лист — за перемикачем нагадувань.
+     */
+    public static function sendSubordinateOverdue(): int
+    {
+        if (!\App\Core\Team::ready()) {
+            return 0;
+        }
+        $db = \App\Core\Database::connection();
+        try {
+            $rows = $db->query(
+                "SELECT t.id, t.title, t.due_date, t.assignee_id, p.name AS project_name
+                   FROM tasks t JOIN task_statuses ts ON ts.id = t.status_id JOIN projects p ON p.id = t.project_id
+                   LEFT JOIN task_due_reminders r ON r.task_id = t.id AND r.reminder_type = 'head_overdue'
+                  WHERE ts.is_closed = 0 AND t.assignee_id IS NOT NULL AND t.due_date < CURDATE() AND r.id IS NULL LIMIT 500"
+            )->fetchAll();
+        } catch (\Throwable) {
+            return 0; // міграція 066 ще не застосована
+        }
+        $sent = 0;
+        foreach ($rows as $t) {
+            try {
+                self::headEvent((int) $t['assignee_id'], 0, 'Прострочено термін задачі підлеглого',
+                    self::subordinateName((int) $t['assignee_id']) . ': «' . $t['title'] . '» (проєкт «' . $t['project_name'] . '»), термін був ' . \App\Core\TimeFormat::date((string) $t['due_date']),
+                    '/tasks/' . $t['id'], 'tasks', self::remindersEnabled());
+                $db->prepare("INSERT IGNORE INTO task_due_reminders (task_id, reminder_type) VALUES (:id, 'head_overdue')")->execute(['id' => $t['id']]);
+                $sent++;
+            } catch (\Throwable) {
+            }
+        }
+        return $sent;
+    }
+
     // ---------- Тікети ----------
 
     /**
@@ -72,6 +207,9 @@ class NotificationService
      */
     public static function ticketCommentAdded(int $ticketId, string $authorType, ?int $authorId, string $commentBody = ''): void
     {
+        if ($authorType === 'operator') {
+            self::subordinateTicketComment($ticketId, $authorId);
+        }
         self::centerTicketComment($ticketId, $authorType, $authorId);
         if (!self::ticketsEnabled()) {
             return;
@@ -439,6 +577,7 @@ class NotificationService
     /** Задачу створено з одразу вказаним виконавцем. */
     public static function taskCreated(int $taskId, ?int $assigneeId, int $authorId): void
     {
+        self::subordinateTaskAssigned($taskId, $assigneeId, $authorId);
         if ($assigneeId && $assigneeId !== $authorId) {
             self::centerTask($taskId, $assigneeId, 'Вас призначено виконавцем нової задачі');
         }
@@ -451,6 +590,9 @@ class NotificationService
     /** Виконавця задачі змінено — сповіщаємо нового, лише якщо він справді змінився. */
     public static function taskAssigneeChanged(int $taskId, ?int $assigneeId, ?int $previousAssigneeId, int $actingUserId): void
     {
+        if ($assigneeId !== $previousAssigneeId) {
+            self::subordinateTaskAssigned($taskId, $assigneeId, $actingUserId);
+        }
         if ($assigneeId && $assigneeId !== $previousAssigneeId && $assigneeId !== $actingUserId) {
             self::centerTask($taskId, $assigneeId, 'Вас призначено виконавцем задачі');
         }
@@ -458,6 +600,48 @@ class NotificationService
             return;
         }
         self::sendTaskAssigneeMail($taskId, $assigneeId, isNew: false);
+    }
+
+    /**
+     * Задача від керівництва: виконавець поставив «Вирішена» — сповіщаємо того, хто перевіряє й закриває
+     * (Керівника відділу виконавця, за його відсутності — автора); задачу закрито — сповіщаємо автора
+     * (Керівника підрозділу). Центр — завжди, лист — за перемикачем сповіщень про задачі. Той, хто змінив статус, не сповіщається.
+     */
+    public static function taskReviewStep(int $taskId, string $step, int $actingUserId): void
+    {
+        try {
+            $task = \App\Models\Task::find($taskId);
+            if (!$task || !\App\Models\Task::isManagerial($task)) {
+                return;
+            }
+            if ($step === 'resolved') {
+                $target = \App\Models\Task::reviewerId($task);
+                $title = 'Задачу виконано — потрібна перевірка й закриття';
+                $intro = 'Виконавець позначив задачу «' . $task['title'] . '» як вирішену. Перевірте результат і, якщо все гаразд, поставте статус «Закрита».';
+            } else {
+                $target = (int) $task['author_id'];
+                $title = 'Задачу перевірено й закрито';
+                $intro = 'Задачу «' . $task['title'] . '» перевірено й закрито. Якщо вона виконана в повному обсязі, її можна відправити в архів.';
+            }
+            if (!$target || $target === $actingUserId) {
+                return;
+            }
+            self::centerTask($taskId, $target, $title);
+            if (!self::tasksEnabled()) {
+                return;
+            }
+            $user = User::findById($target);
+            if (!$user || !$user['is_active'] || empty($user['email'])) {
+                return;
+            }
+            $link = Setting::appUrl() . '/tasks/' . $taskId;
+            $body = "Доброго дня, {$user['full_name']}!\n\n{$intro}\nПроєкт: «{$task['project_name']}».\n\nПереглянути задачу:\n{$link}\n\nЦе автоматичне повідомлення.";
+            $result = MailerService::send($user['email'], $user['full_name'], $title . ': «' . $task['title'] . '»', $body);
+            if (!$result['ok']) {
+                Audit::log('task', $taskId, 'notification_failed', null, ['to' => $user['email'], 'error' => mb_substr($result['message'], 0, 200)]);
+            }
+        } catch (\Throwable) {
+        }
     }
 
     private static function sendTaskAssigneeMail(int $taskId, int $assigneeId, bool $isNew): void
@@ -473,7 +657,7 @@ class NotificationService
             $subject = $isNew
                 ? "Вас призначено виконавцем нової задачі «{$task['title']}»"
                 : "Вас призначено виконавцем задачі «{$task['title']}»";
-            $due = !empty($task['due_date']) ? "\nТермін виконання: {$task['due_date']}." : '';
+            $due = !empty($task['due_date']) ? "\nТермін виконання: " . \App\Core\TimeFormat::date((string) $task['due_date']) . "." : '';
             $body = "Доброго дня, {$user['full_name']}!\n\n{$subject} (проєкт «{$task['project_name']}»).{$due}\n\nПереглянути задачу:\n{$link}\n\nЦе автоматичний лист.";
             $result = MailerService::send($user['email'], $user['full_name'], $subject, $body);
             if (!$result['ok']) {
@@ -533,6 +717,7 @@ class NotificationService
         $sent += self::sendRemindersForThreshold('2d', '+2 days', exact: true);
         $sent += self::sendRemindersForThreshold('1d', '+1 day', exact: true);
         $sent += self::sendRemindersForThreshold('due', 'today', exact: false); // exact=false: і сьогодні, і вже прострочені
+        $sent += self::sendSubordinateOverdue(); // Керівнику відділу — про прострочені задачі підлеглих
         return ['sent' => $sent, 'skipped_reason' => null];
     }
 
@@ -568,7 +753,7 @@ class NotificationService
                     $link = Setting::appUrl() . '/tasks/' . $task['id'];
                     $subject = "Нагадування: термін задачі «{$task['title']}» — {$label}";
                     $body = "Доброго дня, {$user['full_name']}!\n\n"
-                        . "Термін виконання задачі «{$task['title']}» (проєкт «{$task['project_name']}») — {$task['due_date']} ({$label}).\n\n"
+                        . "Термін виконання задачі «{$task['title']}» (проєкт «{$task['project_name']}») — " . \App\Core\TimeFormat::date((string) $task['due_date']) . " ({$label}).\n\n"
                         . "Переглянути задачу:\n{$link}\n\nЦе автоматичний лист.";
                     if (self::$remindMail) {
                         $result = MailerService::send($user['email'], $user['full_name'], $subject, $body);
@@ -576,7 +761,7 @@ class NotificationService
                             continue; // не позначаємо як надіслане — спробуємо знову наступного запуску
                         }
                     }
-                    self::center((int) $user['id'], 'Нагадування: термін задачі — ' . $label, '«' . $task['title'] . '» (проєкт «' . $task['project_name'] . '»), термін ' . $task['due_date'], '/tasks/' . $task['id'], 'reminders');
+                    self::center((int) $user['id'], 'Нагадування: термін задачі — ' . $label, '«' . $task['title'] . '» (проєкт «' . $task['project_name'] . '»), термін ' . \App\Core\TimeFormat::date((string) $task['due_date']), '/tasks/' . $task['id'], 'reminders');
                 }
 
                 // Позначаємо оброблено навіть якщо виконавець неактивний — щоб не перевіряти його щоразу.

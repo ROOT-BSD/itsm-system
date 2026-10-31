@@ -24,7 +24,7 @@ $isFinished = in_array($ticket['status'], ['resolved', 'closed'], true);
                 <table class="table table-sm w-auto mt-3">
                     <tr><th>Черга</th><td><?= \App\Core\View::e($ticket['queue_name']) ?></td></tr>
                     <tr><th>Оператор</th><td><?= \App\Core\View::e($ticket['operator_name'] ?? '— ще не призначено —') ?></td></tr>
-                    <tr><th>Створено</th><td><?= \App\Core\View::e($ticket['created_at']) ?></td></tr>
+                    <tr><th>Створено</th><td><?= \App\Core\View::dt($ticket['created_at'], '') ?></td></tr>
                 </table>
                 <?php if (!empty($ticket['description'])): ?>
                     <p class="mb-0"><?= \App\Core\View::richText($ticket['description'], $attachments ?? [], fn($id) => '/support/track/' . $ticket['access_token'] . '/attachments/' . $id) ?></p>
@@ -32,14 +32,14 @@ $isFinished = in_array($ticket['status'], ['resolved', 'closed'], true);
 
                 <?php if ($sla['has_policy']): ?>
                     <?php if ($sla['response_overdue']): ?>
-                        <div class="alert alert-danger py-2 mt-3 mb-0">Норматив часу першої відповіді (<?= \App\Core\View::e($sla['response_due_at']) ?>) прострочено — вибачте за затримку, оператор скоро відповість.</div>
+                        <div class="alert alert-danger py-2 mt-3 mb-0">Норматив часу першої відповіді (<?= \App\Core\View::dt($sla['response_due_at'], '') ?>) прострочено — вибачте за затримку, оператор скоро відповість.</div>
                     <?php elseif (empty($ticket['first_response_at'])): ?>
-                        <div class="alert alert-light border py-2 mt-3 mb-0">Очікувана перша відповідь — до <?= \App\Core\View::e($sla['response_due_at']) ?>.</div>
+                        <div class="alert alert-light border py-2 mt-3 mb-0">Очікувана перша відповідь — до <?= \App\Core\View::dt($sla['response_due_at'], '') ?>.</div>
                     <?php endif; ?>
                     <?php if ($sla['resolution_overdue']): ?>
-                        <div class="alert alert-danger py-2 mt-2 mb-0">Норматив часу вирішення (<?= \App\Core\View::e($sla['resolution_due_at']) ?>) прострочено.</div>
+                        <div class="alert alert-danger py-2 mt-2 mb-0">Норматив часу вирішення (<?= \App\Core\View::dt($sla['resolution_due_at'], '') ?>) прострочено.</div>
                     <?php elseif (!$isFinished): ?>
-                        <div class="alert alert-light border py-2 mt-2 mb-0">Очікуваний час вирішення — до <?= \App\Core\View::e($sla['resolution_due_at']) ?>.</div>
+                        <div class="alert alert-light border py-2 mt-2 mb-0">Очікуваний час вирішення — до <?= \App\Core\View::dt($sla['resolution_due_at'], '') ?>.</div>
                     <?php endif; ?>
                 <?php endif; ?>
             </div>
@@ -103,7 +103,7 @@ $isFinished = in_array($ticket['status'], ['resolved', 'closed'], true);
                 <?php foreach ($comments as $c): ?>
                 <li class="list-group-item">
                     <strong><?= $c['author_type'] === 'operator' ? \App\Core\View::e($c['author_name'] ?? 'Оператор') : \App\Core\View::e($ticket['requester_name']) ?></strong>
-                    <span class="text-muted small"><?= \App\Core\View::e($c['created_at']) ?></span>
+                    <span class="text-muted small"><?= \App\Core\View::dt($c['created_at'], '') ?></span>
                     <p class="mb-0"><?= \App\Core\View::richText($c['body'], $attachments ?? [], fn($id) => '/support/track/' . $ticket['access_token'] . '/attachments/' . $id) ?></p>
                 </li>
                 <?php endforeach; ?>

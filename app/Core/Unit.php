@@ -71,7 +71,7 @@ final class Unit
     {
         self::assertIdent($alias);
         return self::localReady()
-            ? "NULLIF(TRIM(IF({$alias}.auth_source = 'ad', {$alias}.ad_ou, {$alias}.unit_ou)), '')"
+            ? "NULLIF(TRIM(IF({$alias}.auth_source = 'ad', COALESCE(NULLIF(TRIM({$alias}.unit_ou), ''), {$alias}.ad_ou), {$alias}.unit_ou)), '')"
             : "NULLIF(TRIM(IF({$alias}.auth_source = 'ad', {$alias}.ad_ou, NULL)), '')";
     }
 
@@ -118,6 +118,25 @@ final class Unit
         [$match, $mParams] = self::matchSql('x', 'cu', (string) self::scopeOu($adminId));
         $stmt = Database::connection()->prepare("SELECT 1 FROM users x WHERE x.id = :uid AND {$match}");
         $stmt->execute($mParams + ['uid' => $userId]);
+        return (bool) $stmt->fetchColumn();
+    }
+
+    /**
+     * Чи належить $userId до підрозділу (OU) користувача $viewerId — для ролі «Керівник підрозділу» (it_manager), у якого
+     * підрозділ задано (AD OU чи локальний). null — підрозділ не задано, обмеження не застосовується.
+     */
+    public static function viewerOuContains(int $viewerId, int $userId): ?bool
+    {
+        $ou = self::userOu($viewerId);
+        if ($ou === null) {
+            return null;
+        }
+        if ($viewerId === $userId) {
+            return true;
+        }
+        [$match, $p] = self::matchSql('x', 'vo', $ou);
+        $stmt = Database::connection()->prepare("SELECT 1 FROM users x WHERE x.id = :uid AND {$match}");
+        $stmt->execute($p + ['uid' => $userId]);
         return (bool) $stmt->fetchColumn();
     }
 

@@ -3,7 +3,7 @@
 </div>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h3 class="mb-0">Відкриті задачі</h3>
+    <h3 class="mb-0"><?= !empty($mine) ? 'Мої відкриті задачі' : 'Відкриті задачі' ?></h3>
     <div class="d-flex gap-2">
         <?php if (\App\Core\Auth::hasRole(['admin', 'unit_admin', 'it_manager'])): ?><a href="<?= \App\Core\Auth::hasRole(['admin']) ? '/admin/task-rules' : '/task-rules' ?>" class="btn btn-outline-secondary">Правила для задач</a><?php endif; ?>
         <?php $exportUrl = '/tasks/export'; require __DIR__ . '/../_export_button.php'; ?>
@@ -28,7 +28,7 @@
             <td colspan="8" class="fw-semibold"><a href="/projects/<?= $pid ?>" class="text-decoration-none text-body"><?= \App\Core\View::e($t['project_name']) ?></a></td>
         </tr>
         <?php endif; ?>
-        <tr style="--bs-table-bg: hsl(<?= $hue ?>, 55%, 94%);">
+        <tr class="<?= !empty($t['is_closed']) ? 'task-struck' : '' ?>" style="--bs-table-bg: hsl(<?= $hue ?>, 55%, 94%);">
             <td><a href="/tasks/<?= (int)$t['id'] ?>">#<?= (int)$t['id'] ?></a></td>
             <td><?php if (!empty($t['parent_task_id'])): ?><span class="text-muted" title="Підзадача задачі #<?= (int)$t['parent_task_id'] ?>">↳ </span><?php endif; ?><?= \App\Core\View::e($t['title']) ?>
                 <?= \App\Core\View::progress($t) ?>
@@ -39,9 +39,9 @@
             <td><span class="badge bg-secondary"><?= \App\Core\View::e($t['status_name']) ?></span></td>
             <td class="<?= ($u = \App\Core\View::urgencyClass($t['due_date'] ?? null)) !== '' ? 'dash-due-' . substr($u, -1) : '' ?>">
                 <?php if (!empty($t['due_date']) && \App\Core\View::urgencyLevel($t['due_date']) === 4): ?>
-                    <span class="badge bg-danger">⚠️ <?= \App\Core\View::e($t['due_date']) ?></span>
+                    <span class="badge bg-danger">⚠️ <?= \App\Core\View::date($t['due_date'], '') ?></span>
                 <?php elseif (!empty($t['due_date'])): ?>
-                    <?= \App\Core\View::e($t['due_date']) ?>
+                    <?= \App\Core\View::date($t['due_date'], '') ?>
                 <?php else: ?>
                     <span class="text-muted">—</span>
                 <?php endif; ?>

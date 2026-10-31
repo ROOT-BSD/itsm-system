@@ -42,7 +42,7 @@ class ExportController
                 (int) $t['id'], $t['subject'], $t['queue_name'], $t['project_name'] ?? '',
                 $t['requester_name'], $t['operator_name'] ?? '', \App\Models\Ticket::statusLabel((string) $t['status']),
                 !$sla['has_policy'] ? '' : (($sla['response_overdue'] || $sla['resolution_overdue']) ? 'Прострочено' : 'У нормі'),
-                $t['created_at'], $t['first_response_at'] ?? '', $t['resolved_at'] ?? '',
+                \App\Core\TimeFormat::dateTime((string) $t['created_at']), \App\Core\TimeFormat::dateTime($t['first_response_at'] ?? null), \App\Core\TimeFormat::dateTime($t['resolved_at'] ?? null),
                 $t['csat_score'] !== null ? (int) $t['csat_score'] : '',
             ];
         }
@@ -65,10 +65,10 @@ class ExportController
         foreach ($list as $t) {
             $rows[] = [
                 (int) $t['id'], $t['title'], $t['project_name'], $t['type_name'], $t['status_name'],
-                $t['priority'], $t['assignee_name'] ?? '', $t['start_date'] ?? '', $t['due_date'] ?? '',
+                $t['priority'], $t['assignee_name'] ?? '', \App\Core\TimeFormat::date($t['start_date'] ?? null), \App\Core\TimeFormat::date($t['due_date'] ?? null),
                 $t['estimated_hours'] !== null ? (float) $t['estimated_hours'] : '',
                 $t['actual_hours'] !== null ? (float) $t['actual_hours'] : '',
-                $t['created_at'],
+                \App\Core\TimeFormat::dateTime((string) $t['created_at']),
             ];
         }
         TableExport::send($closed ? 'tasks-closed' : 'tasks', $_GET['format'] ?? '', [
@@ -108,6 +108,17 @@ class ExportController
         if (!Access::isUnitAdmin(Auth::role())) {
             http_response_code(403);
             echo 'Ця сторінка доступна лише ролі «Адміністратор Підрозділу».';
+            exit;
+        }
+        $this->sendTicketsReport((int) Auth::id());
+    }
+
+    public function teamTicketsReport(): void
+    {
+        Auth::requireLogin();
+        if (!Access::isDeptHead(Auth::role())) {
+            http_response_code(403);
+            echo 'Ця сторінка доступна лише ролі «Керівник відділу».';
             exit;
         }
         $this->sendTicketsReport((int) Auth::id());
@@ -175,7 +186,7 @@ class ExportController
                 }
             }
             $rows[] = [
-                $e['created_at'], Audit::ENTITY_TYPE_LABELS[$type] ?? $type, $id,
+                \App\Core\TimeFormat::dateTime((string) $e['created_at']), Audit::ENTITY_TYPE_LABELS[$type] ?? $type, $id,
                 $names[$type][$id] ?? '', $e['action'], $e['user_name'] ?? '— система —', implode('; ', $details),
             ];
         }

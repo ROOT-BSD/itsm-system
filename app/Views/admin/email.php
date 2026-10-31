@@ -230,7 +230,7 @@ $resultLabels = [
         <tr><td colspan="6" class="text-center text-muted">Листів ще не оброблено</td></tr>
     <?php else: foreach ($log as $row): ?>
         <tr>
-            <td class="text-nowrap"><?= \App\Core\View::e($row['created_at']) ?></td>
+            <td class="text-nowrap"><?= \App\Core\View::dt($row['created_at'], '') ?></td>
             <td><?= \App\Core\View::e($row['from_email'] !== '' ? $row['from_email'] : '—') ?></td>
             <td><?= \App\Core\View::e($row['subject'] !== '' ? $row['subject'] : '—') ?></td>
             <td>

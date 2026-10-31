@@ -298,15 +298,6 @@ class Forum
         $pdo->prepare('DELETE FROM forum_topic_reads WHERE user_id = :u')->execute(['u' => $userId]);
     }
 
-    /** Кількість непрочитаних тем у розділах, видимих ролі. */
-    public static function unreadTotal(?string $role, int $userId): int
-    {
-        $total = 0;
-        foreach (self::boards($role, $userId) as $b) {
-            $total += (int) ($b['unread_count'] ?? 0);
-        }
-        return $total;
-    }
 
     // ------------------------------------------------------------------ розділи
 

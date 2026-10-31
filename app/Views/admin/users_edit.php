@@ -45,19 +45,20 @@
             <input type="hidden" name="role_id" value="<?= (int)$targetUser['role_id'] ?>">
         <?php endif; ?>
     </div>
-    <?php if ($targetUser['auth_source'] === 'local'): ?>
     <?php if (!empty($unitReady)): ?>
     <div class="mb-3">
-        <label class="form-label">Підрозділ <span class="text-muted small">(необов'язково)</span></label>
+        <label class="form-label">Підрозділ <span class="text-muted small">(<?= $targetUser['auth_source'] === 'ad' ? 'вручну; порожньо — з AD' : "необов'язково" ?>)</span></label>
         <input type="text" name="unit_ou" class="form-control" list="unitOus" placeholder="Київ › ІТ" value="<?= \App\Core\View::e(\App\Core\LdapDn::ouLabel((string)($targetUser['unit_ou'] ?? ''))) ?>">
         <datalist id="unitOus">
             <?php foreach ($knownOus as $ouPath): ?>
                 <option value="<?= \App\Core\View::e(\App\Core\LdapDn::ouLabel($ouPath)) ?>"></option>
             <?php endforeach; ?>
         </datalist>
-        <div class="form-text">Від найбільшого підрозділу до найменшого через «›»: <code>Київ › ІТ</code>. Той самий запис, що й у AD, ставить локального користувача в один підрозділ з AD-користувачами. Потрібен для ролі «Адміністратор Підрозділу» та щоб його бачив адміністратор підрозділу.</div>
+        <div class="form-text">Від найбільшого підрозділу до найменшого через «›»: <code>Київ › ІТ</code>. Підрозділ можна ввести вручну (новий або існуючий — підказки з уже відомих). Той самий запис, що й у AD, ставить користувача в один підрозділ з AD-користувачами.
+        <?php if ($targetUser['auth_source'] === 'ad'): ?>
+            <br>OU із Active Directory: <strong><?= !empty($targetUser['ad_ou']) ? \App\Core\View::e(\App\Core\LdapDn::ouLabel((string)$targetUser['ad_ou'])) : 'не задано' ?></strong>. Вказаний вручну підрозділ має пріоритет і не змінюється синхронізацією; щоб повернутись до AD — очистіть поле.
+        <?php endif; ?></div>
     </div>
-    <?php endif; ?>
     <?php elseif (!empty($targetUser['ad_ou'])): ?>
     <div class="mb-3">
         <label class="form-label">Підрозділ (AD OU)</label>

@@ -163,6 +163,16 @@
     const gantt = new Gantt('#gantt-chart', tasks, {
         view_mode: 'Week',
         language: 'en',
+        // Підказка над смугою: дати як 30.10.2026 (за замовчуванням бібліотека показує «Oct 30»)
+        custom_popup_html: function (task) {
+            function dmy(d) {
+                return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+            }
+            var end = new Date(task._end.getTime() - 1000);
+            var esc = document.createElement('div');
+            esc.textContent = task.name;
+            return '<div class="details-container p-2"><h5>' + esc.innerHTML + '</h5><p>' + dmy(task._start) + ' — ' + dmy(end) + '</p><p>Виконано: ' + (task.progress || 0) + '%</p></div>';
+        },
         on_click: function (task) {
             window.location.href = '/tasks/' + task.id;
         },

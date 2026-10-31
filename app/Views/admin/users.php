@@ -24,11 +24,11 @@ $renderUserTable = function (array $users) {
         </thead>
         <tbody>
         <?php foreach ($users as $u): ?>
-            <tr>
+            <tr id="u<?= (int)$u['id'] ?>" tabindex="-1">
                 <td>
                     <?= \App\Core\View::e($u['full_name']) ?>
-                    <?php if ($u['auth_source'] === 'local' && !empty($u['unit_ou'])): ?>
-                        <br><span class="text-muted small">Підрозділ: <?= \App\Core\View::e(\App\Core\LdapDn::ouLabel((string)$u['unit_ou'])) ?></span>
+                    <?php if (!empty($u['unit_ou'])): ?>
+                        <br><span class="text-muted small">Підрозділ<?= $u['auth_source'] === 'ad' ? ' (вказано вручну)' : '' ?>: <?= \App\Core\View::e(\App\Core\LdapDn::ouLabel((string)$u['unit_ou'])) ?></span>
                     <?php endif; ?>
                 </td>
                 <td><?= \App\Core\View::e($u['email']) ?></td>
@@ -107,19 +107,43 @@ $renderUserTable = function (array $users) {
 };
 ?>
 
-<h5>Локальні облікові записи</h5>
+<h5>Локальні облікові записи <span class="text-muted fs-6">(без підрозділу)</span></h5>
 <?php if (empty($localUsers)): ?>
     <div class="alert alert-light border mb-4">Локальних облікових записів немає.</div>
 <?php else: ?>
     <?php $renderUserTable($localUsers); ?>
 <?php endif; ?>
 
-<h5 class="mt-4">Active Directory</h5>
-<?php if (empty($adGroups)): ?>
+<?php
+$localGroups = array_values(array_filter($adGroups, fn($g) => empty($g['has_ad'])));
+$adOnlyGroups = array_values(array_filter($adGroups, fn($g) => !empty($g['has_ad'])));
+$renderGroups = function (array $groups) use ($renderUserTable) {
+    foreach ($groups as $group): ?>
+    <details class="users-group mb-2"<?= empty($group['has_ad']) ? ' open' : '' ?>>
+        <summary class="fw-semibold py-2 px-3 border rounded users-group-title">
+            <?= $group['label'] === '' ? '— поза OU (напр., стандартний контейнер Users) —' : \App\Core\View::e($group['label']) ?>
+            <span class="badge text-bg-secondary ms-2"><?= count($group['users']) ?></span>
+        </summary>
+        <div class="pt-2"><?php $renderUserTable($group['users']); ?></div>
+    </details>
+    <?php endforeach;
+};
+?>
+<?php if ($localGroups): ?>
+    <h5 class="mt-4">Підрозділи, створені вручну <span class="text-muted fs-6">(локальні, без AD)</span></h5>
+    <?php $renderGroups($localGroups); ?>
+<?php endif; ?>
+
+<h5 class="mt-4">Підрозділи Active Directory <span class="text-muted fs-6">(натисніть, щоб розгорнути)</span></h5>
+<?php if (empty($adOnlyGroups)): ?>
     <div class="alert alert-light border mb-4">
-        AD-облікових записів ще немає — див. <a href="/admin/ad">Адмін-панель → Налаштування → Active Directory</a>, щоб налаштувати підключення й синхронізацію.
+        Користувачів у підрозділах AD ще немає — див. <a href="/admin/ad">Адмін-панель → Налаштування → Active Directory</a>, щоб налаштувати підключення й синхронізацію.
     </div>
-<?php else: foreach ($adGroups as $group): ?>
-    <h6 class="text-muted mt-3"><?= $group['label'] === '' ? '— поза OU (напр., стандартний контейнер Users) —' : \App\Core\View::e($group['label']) ?></h6>
-    <?php $renderUserTable($group['users']); ?>
-<?php endforeach; endif; ?>
+<?php else: ?>
+    <div class="d-flex gap-2 mb-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-users-toggle="open">Розгорнути всі</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-users-toggle="close">Згорнути всі</button>
+    </div>
+    <?php $renderGroups($adOnlyGroups); ?>
+<?php endif; ?>
+<script src="<?= \App\Core\View::e(\App\Core\View::asset('/assets/js/users-groups.js')) ?>" defer></script>

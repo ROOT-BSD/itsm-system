@@ -13,7 +13,7 @@ class TicketController
     /** Допустимі значення статусу тікета (ENUM у БД). */
     private const STATUSES = \App\Models\Ticket::STATUSES;
 
-    /** Оператори служби підтримки й керівники ІТ-підрозділу додатково бачать непризначені тікети — щоб було що брати в роботу. */
+    /** Оператори служби підтримки й керівники підрозділу додатково бачать непризначені тікети — щоб було що брати в роботу. */
     private function canSeeUnassigned(): bool
     {
         return \App\Core\Access::canSeeUnassignedTickets(Auth::role());
@@ -34,7 +34,7 @@ class TicketController
         $fStatus = in_array($_GET['status'] ?? '', Ticket::STATUSES, true) ? $_GET['status'] : '';
         $fLabel = (int) ($_GET['label'] ?? 0);
         // Мітки — внутрішні, заявники їх не бачать.
-        $labelMap = Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'sysadmin', 'support_operator', 'observer']) ? Ticket::labelsForTickets(array_map(fn($t) => (int) $t['id'], $tickets)) : [];
+        $labelMap = Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'dept_head', 'sysadmin', 'support_operator', 'observer']) ? Ticket::labelsForTickets(array_map(fn($t) => (int) $t['id'], $tickets)) : [];
         $tickets = array_values(array_filter($tickets, function (array $t) use ($fPrio, $fStatus, $fLabel, $labelMap): bool {
             if ($fPrio !== '' && ($t['priority'] ?? 'normal') !== $fPrio) {
                 return false;
@@ -68,7 +68,7 @@ class TicketController
 
         View::render('tickets/index', [
             'fPrio' => $fPrio, 'fStatus' => $fStatus, 'fLabel' => $fLabel, 'byPriority' => $byPriority,
-            'allLabels' => $labelMap || Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'sysadmin', 'support_operator', 'observer']) ? Ticket::labels() : [], 'labelMap' => $labelMap,
+            'allLabels' => $labelMap || Auth::hasRole(['admin', 'unit_admin', 'it_manager', 'dept_head', 'sysadmin', 'support_operator', 'observer']) ? Ticket::labels() : [], 'labelMap' => $labelMap,
             'tickets' => $tickets,
         ]);
     }
@@ -161,7 +161,7 @@ class TicketController
         View::render('tickets/show', [
             'ticket' => $ticket,
             'comments' => Ticket::comments($ticket['id']),
-            'users' => User::allActive(),
+            'users' => User::selectableFor(Auth::role(), (int) Auth::id(), (int) ($ticket['assigned_operator_id'] ?? 0) ?: null),
             'sla' => Ticket::slaStatus($ticket, Ticket::slaPoliciesByQueue()),
             'error' => $_GET['error'] ?? null,
             'success' => $_GET['success'] ?? null,
@@ -243,11 +243,16 @@ class TicketController
         // призначити (або зняти) оператора на чужому зверненні.
         if (!\App\Core\Access::canAssignTicketOperator(Auth::role())) {
             http_response_code(403);
-            echo 'Призначати оператора тікета можуть лише керівник ІТ-підрозділу, адміністратор системи або оператор служби підтримки.';
+            echo 'Призначати оператора тікета можуть лише керівник підрозділу, адміністратор системи або оператор служби підтримки.';
             return;
         }
 
         $operatorId = !empty($_POST['operator_id']) ? (int) $_POST['operator_id'] : null;
+        $cur = Ticket::find((int) $params['id']);
+        if ($operatorId !== null && !User::inSelectScope(Auth::role(), (int) Auth::id(), $operatorId, (int) ($cur['assigned_operator_id'] ?? 0) ?: null)) {
+            header('Location: /tickets/' . (int) $params['id'] . '?error=' . urlencode('Оператором можна призначити лише користувача зі свого підрозділу чи команди.'));
+            exit;
+        }
         Ticket::assignOperator((int) $params['id'], $operatorId, Auth::id());
         header('Location: /tickets/' . $params['id']);
         exit;
@@ -258,7 +263,7 @@ class TicketController
         Auth::requireLogin();
         if (!\App\Core\Access::canAssignTicketOperator(Auth::role())) {
             http_response_code(403);
-            echo 'Призначати мітки можуть лише керівник ІТ-підрозділу, адміністратор системи або оператор служби підтримки.';
+            echo 'Призначати мітки можуть лише керівник підрозділу, адміністратор системи або оператор служби підтримки.';
             return;
         }
         $ticket = Ticket::find((int) $params['id']);
@@ -277,7 +282,7 @@ class TicketController
         Auth::requireLogin();
         if (!\App\Core\Access::canAssignTicketOperator(Auth::role())) {
             http_response_code(403);
-            echo 'Змінювати пріоритет тікета можуть лише керівник ІТ-підрозділу, адміністратор системи або оператор служби підтримки.';
+            echo 'Змінювати пріоритет тікета можуть лише керівник підрозділу, адміністратор системи або оператор служби підтримки.';
             return;
         }
         $ticket = Ticket::find((int) $params['id']);
@@ -429,20 +434,27 @@ class TicketController
         Auth::requireLogin();
         $ticket = $this->findStaffTicketOrFail((int) $params['id'], 'Облік часу по тікетах доступний лише персоналу підтримки та адміністраторам.');
         $url = '/tickets/' . (int) $ticket['id'];
-        $hours = (float) str_replace(',', '.', (string) ($_POST['hours'] ?? ''));
+        $rawMin = trim((string) ($_POST['minutes'] ?? ''));
+        if ($rawMin !== '') {
+            $minutes = preg_match('/^\d{1,4}$/', $rawMin) ? (int) $rawMin : 0;
+        } else {
+            // сумісність зі старою формою (години) та API-клієнтами
+            $minutes = (int) round((float) str_replace(',', '.', (string) ($_POST['hours'] ?? '')) * 60);
+        }
+        $hours = round($minutes / 60, 4);
         $date = (string) ($_POST['log_date'] ?? '');
         $d = \DateTime::createFromFormat('Y-m-d', $date);
-        if ($hours <= 0 || $hours > 24) {
-            $this->linkRedirect($url, 'error', 'Вкажіть кількість годин від 0,01 до 24.');
+        if ($minutes < 1 || $minutes > 1440) {
+            $this->linkRedirect($url, 'error', 'Вкажіть кількість хвилин від 1 до 1440 (24 години).');
         }
         if (!$d || $d->format('Y-m-d') !== $date || $date > date('Y-m-d')) {
             $this->linkRedirect($url, 'error', 'Вкажіть коректну дату (не з майбутнього).');
         }
         $category = mb_substr(trim((string) ($_POST['activity_category'] ?? '')), 0, 100);
         $comment = mb_substr(trim((string) ($_POST['comment'] ?? '')), 0, 255);
-        $id = \App\Models\TicketTimeLog::add((int) $ticket['id'], (int) Auth::id(), round($hours, 2), $date, $category, $comment);
-        \App\Models\Audit::log('ticket', (int) $ticket['id'], 'time_logged', (int) Auth::id(), ['log' => $id, 'hours' => round($hours, 2), 'date' => $date]);
-        $this->linkRedirect($url, 'success', 'Час записано: ' . number_format($hours, 2, ',', '') . ' год.');
+        $id = \App\Models\TicketTimeLog::add((int) $ticket['id'], (int) Auth::id(), $hours, $date, $category, $comment);
+        \App\Models\Audit::log('ticket', (int) $ticket['id'], 'time_logged', (int) Auth::id(), ['log' => $id, 'minutes' => $minutes, 'hours' => $hours, 'date' => $date]);
+        $this->linkRedirect($url, 'success', 'Час записано: ' . \App\Core\TimeFormat::minutes($minutes));
     }
 
     public function deleteTime(array $params): void

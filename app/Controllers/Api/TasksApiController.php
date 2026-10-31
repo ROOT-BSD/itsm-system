@@ -105,6 +105,9 @@ class TasksApiController extends ApiController
     {
         $this->requireWrite();
         $task = $this->visibleTask((int) $params['id']);
+        if (!Task::canEdit($task, $this->userId, $this->role)) {
+            ApiResponse::error(403, 'forbidden', 'Керівник відділу керує лише задачами своєї команди; ця задача — лише для перегляду.');
+        }
         $data = $this->body();
         $errors = [];
 
@@ -154,6 +157,10 @@ class TasksApiController extends ApiController
         if ($newStatusId !== null && !isset($errors['status']) && !isset($errors['status_id'])
             && ($problem = Task::statusChangeProblem((int) $task['id'], $newStatusId)) !== null) {
             $errors['status'] = $problem . '.';
+        }
+        if ($newStatusId !== null && !isset($errors['status']) && !isset($errors['status_id'])
+            && ($problem = Task::managerialStatusProblem((int) $task['id'], $newStatusId, $this->userId, $this->role)) !== null) {
+            $errors['status'] = $problem;
         }
         if ($errors) {
             $this->validationFailed($errors);

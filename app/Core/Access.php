@@ -23,19 +23,37 @@ final class Access
     /** Призначати й знімати оператора тікета. */
     public static function canAssignTicketOperator(?string $role): bool
     {
-        return in_array($role, ['admin', 'unit_admin', 'it_manager', 'support_operator'], true);
+        return in_array($role, ['admin', 'unit_admin', 'it_manager', 'dept_head', 'support_operator'], true);
     }
 
     /** Чий це коментар у тікеті: оператора чи заявника (так історично визначає й веб-форма). */
     public static function ticketCommentAuthorType(?string $role): string
     {
-        return in_array($role, ['admin', 'unit_admin', 'support_operator'], true) ? 'operator' : 'requester';
+        return in_array($role, ['admin', 'unit_admin', 'dept_head', 'support_operator'], true) ? 'operator' : 'requester';
+    }
+
+    /** Облік часу по всіх доступних проєктах і тікетах (/manager/time): керівник підрозділу. */
+    public static function canViewManagerTime(?string $role): bool
+    {
+        return in_array($role, ['it_manager', Team::ROLE], true);
+    }
+
+    /** Керівник відділу: команда підлеглих, їхні проєкти, задачі й тікети (App\Core\Team). */
+    public static function isDeptHead(?string $role): bool
+    {
+        return $role === Team::ROLE;
+    }
+
+    /** Складати команду Керівників відділу (додавати/знімати підлеглих): адміністратор і Керівник підрозділу; Керівник відділу — лише свою. */
+    public static function canManageTeams(?string $role): bool
+    {
+        return in_array($role, ['admin', 'it_manager'], true);
     }
 
     /** Створювати проєкти й підпроєкти, призначати відповідального. */
     public static function canManageProjects(?string $role): bool
     {
-        return in_array($role, ['admin', 'unit_admin', 'it_manager'], true);
+        return in_array($role, ['admin', 'unit_admin', 'it_manager', 'dept_head'], true);
     }
 
     /** Реєстр обладнання й ПЗ: бачити й редагувати картки активів (адміністратор підрозділу — лише свого підрозділу). */
