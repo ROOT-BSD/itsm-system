@@ -48,10 +48,19 @@ $maxFile = \App\Services\LibraryService::maxBytes();
                                 <a href="/library/<?= $id ?>/preview" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">Переглянути (PDF)</a>
                             <?php endif; ?>
                             <?php if (in_array($latest['mime_type'], \App\Services\LibraryService::INLINE_MIMES, true)): ?>
-                                <a href="/library/<?= $id ?>/download" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">Відкрити</a>
+                                <a href="/library/<?= $id ?>/download<?= $latest['mime_type'] === 'application/pdf' && !empty($_GET['hl']) && is_string($_GET['hl']) ? '#search=' . rawurlencode(mb_substr(trim($_GET['hl']), 0, 100)) : '' ?>" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">Відкрити</a>
                             <?php endif; ?>
                             <a href="/library/<?= $id ?>/download?download=1" class="btn btn-sm btn-primary">Завантажити</a>
                         </div>
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!empty($contentHits)): ?>
+                    <div class="border rounded p-2 mt-3 bg-body-tertiary">
+                        <div class="small fw-semibold mb-1">Збіги у вмісті файлу «<?= $e((string) ($_GET['hl'] ?? '')) ?>» (поточна версія)</div>
+                        <ul class="small mb-0 ps-3">
+                            <?php foreach ($contentHits as $hit): ?><li><?= $hit ?></li><?php endforeach; ?>
+                        </ul>
                     </div>
                 <?php endif; ?>
 

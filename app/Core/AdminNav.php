@@ -28,7 +28,7 @@ class AdminNav
             'heading' => 'Налаштування системи',
             'lead' => 'Облікові записи та доступ, підключення до Active Directory і пошти, контроль дій у системі.',
             'url' => '/admin/settings',
-            'prefixes' => ['/admin/settings', '/admin/users', '/admin/security', '/admin/ad', '/admin/email', '/admin/audit', '/admin/sessions', '/admin/login-log', '/admin/status', '/admin/backup', '/admin/api', '/admin/webhooks'],
+            'prefixes' => ['/admin/settings', '/admin/users', '/admin/security', '/admin/ad', '/admin/email', '/admin/audit', '/admin/sessions', '/admin/login-log', '/admin/status', '/admin/update', '/admin/backup', '/admin/api', '/admin/webhooks'],
         ],
     ];
 
@@ -97,6 +97,7 @@ class AdminNav
             ]],
             ['title' => 'Контроль', 'cards' => [
                 $card('💾 Резервні копії', 'Архів бази даних і файлів (вкладення, документи, вікі): створити, скачати, налаштувати автоматичне створення за розкладом і кількість копій, що зберігаються.', '/admin/backup', 'Відкрити'),
+                $card('⬆️ Оновлення', 'Перевірка нової версії, команда оновлення зі змінами з CHANGELOG, оновлення з архіву, завантаженого на комп’ютер.', '/admin/update', 'Відкрити'),
                 $card('🩺 Стан системи', 'Версії, схема БД і міграції, розширення PHP, права на каталоги, вільне місце, чи працює cron, черга вебхуків — усе в одному місці.', '/admin/status', 'Перевірити стан'),
                 $card('🖥️ Активні сесії', 'Хто зараз ввійшов у систему: IP, браузер, остання активність; примусове завершення сесії.', '/admin/sessions', 'Переглянути сесії'),
                 $card('🔑 Журнал входів', 'Усі спроби входу — успішні й невдалі: коли, хто, звідки, чим і чому відмовлено; з фільтрами.', '/admin/login-log', 'Переглянути журнал'),

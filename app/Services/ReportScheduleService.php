@@ -163,8 +163,8 @@ class ReportScheduleService
         if ($format === 'pdf') {
             return ['name' => $baseName . '.pdf', 'mime' => 'application/pdf', 'data' => self::pdf($rows, $filterLines)->toString()];
         }
-        $headers = ['Дата', 'Тип', 'Проєкт / черга', 'Задача / тікет', 'Користувач', 'Категорія', 'Час'];
-        $table = array_map(fn($r) => [\App\Core\TimeFormat::date((string) $r['log_date']), ($r['kind'] ?? 'task') === 'ticket' ? 'Тікет' : 'Задача', $r['project_name'], $r['task_title'], $r['user_name'], $r['activity_category'] ?? '', \App\Core\TimeFormat::hm((float) $r['hours'])], $rows);
+        $headers = ['Дата', 'Тип', 'Проєкт / черга', 'Задача / тікет', 'Користувач', 'Категорія', 'Час', 'Час, хв'];
+        $table = array_map(fn($r) => [\App\Core\TimeFormat::date((string) $r['log_date']), ($r['kind'] ?? 'task') === 'ticket' ? 'Тікет' : 'Задача', $r['project_name'], $r['task_title'], $r['user_name'], $r['activity_category'] ?? '', \App\Core\TimeFormat::hm((float) $r['hours']), \App\Core\TimeFormat::toMinutes((float) $r['hours'])], $rows);
         if ($format === 'csv') {
             return ['name' => $baseName . '.csv', 'mime' => 'text/csv; charset=utf-8', 'data' => TableExport::csv($headers, $table)];
         }

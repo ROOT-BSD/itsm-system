@@ -11,6 +11,12 @@ final class TimeFormat
         return self::minutes((int) round($hours * 60));
     }
 
+    /** Години (дробові) → ціла кількість хвилин для експорту й API. */
+    public static function toMinutes(float $hours): int
+    {
+        return (int) round($hours * 60);
+    }
+
     public static function minutes(int $min): string
     {
         if ($min <= 0) {

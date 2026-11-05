@@ -107,7 +107,7 @@ class TicketWorkReport
     /** Заголовки таблиці XLSX/CSV «Звіту по тікетах». */
     public const HEADERS = [
         '№', 'Тема', 'Черга', 'Заявник', 'Оператор', 'Статус', 'Створено', 'Перша відповідь', 'Вирішено',
-        'До першої відповіді', 'До вирішення', 'Витрачено часу',
+        'До першої відповіді', 'До вирішення', 'Витрачено часу', 'Витрачено, хв',
     ];
 
     /** Рядки таблиці XLSX/CSV за рядками Ticket::workReportRows(). */
@@ -120,7 +120,7 @@ class TicketWorkReport
                 (int) $t['id'], $t['subject'], $t['queue_name'], $t['requester_name'], $t['operator_name'] ?? '',
                 \App\Models\Ticket::statusLabel((string) $t['status']), \App\Core\TimeFormat::dateTime((string) $t['created_at']), \App\Core\TimeFormat::dateTime($t['first_response_at'] ?? null), \App\Core\TimeFormat::dateTime($t['resolved_at'] ?? null),
                 $fmt($t['response_min'] !== null ? (float) $t['response_min'] : null), $fmt($t['resolution_min'] !== null ? (float) $t['resolution_min'] : null),
-                \App\Core\TimeFormat::hm((float) $t['spent_hours']),
+                \App\Core\TimeFormat::hm((float) $t['spent_hours']), \App\Core\TimeFormat::toMinutes((float) $t['spent_hours']),
             ];
         }
         return $rows;

@@ -197,7 +197,17 @@ class TasksApiController extends ApiController
         }
         $hours = 0.0;
         $rawHours = $this->body()['hours'] ?? null;
-        if ($rawHours !== null && $rawHours !== '') {
+        $rawMinutes = $this->body()['minutes'] ?? null;
+        $hasMinutes = $rawMinutes !== null && $rawMinutes !== '';
+        if ($hasMinutes && $rawHours !== null && $rawHours !== '') {
+            $this->validationFailed(['minutes' => 'Вкажіть або hours, або minutes — не обидва.']);
+        }
+        if ($hasMinutes) {
+            if (!is_numeric($rawMinutes) || (float) $rawMinutes < 0 || (float) $rawMinutes > 59940 || (float) $rawMinutes != floor((float) $rawMinutes)) {
+                $this->validationFailed(['minutes' => 'Хвилини: ціле число від 0 до 59940 (999 годин).']);
+            }
+            $hours = round((int) $rawMinutes / 60, 4);
+        } elseif ($rawHours !== null && $rawHours !== '') {
             $hours = is_numeric($rawHours) ? round((float) $rawHours, 4) : (Task::parseHours((string) $rawHours) ?? -1.0);
             if ($hours < 0 || $hours > 999) {
                 $this->validationFailed(['hours' => 'Години: число від 0 до 999 (також «1:30» чи «90 хв»).']);

@@ -12,6 +12,7 @@ final class OfficeZip
 {
     private const MAX_ENTRY = 64 * 1048576;
     private const MAX_TOTAL = 256 * 1048576;
+    private const MAX_ENTRIES = 20000;
 
     /** @var array<string, array{method: int, size: int, csize: int, offset: int}> */
     private array $entries = [];
@@ -47,7 +48,7 @@ final class OfficeZip
             throw new OfficeException('Файл не є коректним документом Office.');
         }
         $e = unpack('vdisk/vcdDisk/vcdHere/vcount/VcdSize/VcdOffset', substr($tail, $pos + 4, 16));
-        if ($e === false || $e['count'] < 1 || $e['count'] > 10000 || $e['cdSize'] > 8 * 1048576 || $e['cdOffset'] + $e['cdSize'] > $size) {
+        if ($e === false || $e['count'] < 1 || $e['count'] > self::MAX_ENTRIES || $e['cdSize'] > 8 * 1048576 || $e['cdOffset'] + $e['cdSize'] > $size) {
             throw new OfficeException('Файл не є коректним документом Office.');
         }
         fseek($fh, $e['cdOffset']);
@@ -57,12 +58,27 @@ final class OfficeZip
             if (substr($cd, $off, 4) !== "PK\x01\x02" || $off + 46 > strlen($cd)) {
                 throw new OfficeException('Файл пошкоджено.');
             }
-            $h = unpack('vmethod/x4/Vcrc/Vcsize/Vsize/vnameLen/vextraLen/vcommentLen/x4/x4/Vlocal', substr($cd, $off + 10, 36));
+            $h = unpack('vmethod/x4/Vcrc/Vcsize/Vsize/vnameLen/vextraLen/vcommentLen/x4/Vattr/Vlocal', substr($cd, $off + 10, 36));
+            $madeBy = unpack('vv', substr($cd, $off + 4, 2))['v'];
             $name = substr($cd, $off + 46, $h['nameLen']);
-            $zip->entries[$name] = ['method' => $h['method'], 'size' => $h['size'], 'csize' => $h['csize'], 'offset' => $h['local']];
+            $zip->entries[$name] = ['method' => $h['method'], 'size' => $h['size'], 'csize' => $h['csize'], 'offset' => $h['local'],
+                'attr' => $h['attr'], 'unix' => ($madeBy >> 8) === 3];
             $off += 46 + $h['nameLen'] + $h['extraLen'] + $h['commentLen'];
         }
         return $zip;
+    }
+
+    /** Метадані записів: ім'я => [method, size, csize, offset, attr, unix]. Для перевірки архіву до розпакування. */
+    public function entries(): array
+    {
+        return $this->entries;
+    }
+
+    /** Чи є запис символьним посиланням (Unix-архіви зберігають тип файлу у старших 16 бітах зовнішніх атрибутів). */
+    public function isSymlink(string $name): bool
+    {
+        $en = $this->entries[$name] ?? null;
+        return $en !== null && $en['unix'] && ((($en['attr'] >> 16) & 0170000) === 0120000);
     }
 
     public function has(string $name): bool

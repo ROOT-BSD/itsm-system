@@ -28,14 +28,17 @@ use App\Core\Auth;
                 <li class="nav-item"><a class="nav-link" href="/projects">Проєкти</a></li>
                 <li class="nav-item"><a class="nav-link" href="/calendar">Календар</a></li>
                 <li class="nav-item"><a class="nav-link" href="/tickets">Тікети</a></li>
+                <?php if (\App\Core\Access::canUseChanges(Auth::role())): $__chg = \App\Models\ChangeRequest::pendingFor((int) Auth::id()); ?>
+                <li class="nav-item"><a class="nav-link" href="/changes">Зміни<?php if ($__chg > 0): ?> <span class="badge text-bg-warning" title="Чекають вашого погодження"><?= $__chg ?></span><?php endif; ?></a></li>
+                <?php endif; ?>
                 <?php foreach (\App\Models\MenuPrefs::visibleItems(Auth::role(), (int) Auth::id()) as $mHref => $mLabel): ?>
                 <li class="nav-item"><a class="nav-link" href="<?= $mHref ?>"><?= $mLabel ?></a></li>
                 <?php endforeach; ?>
                 <?php if (\App\Core\Access::canViewManagerTime(Auth::role())): ?>
-                <li class="nav-item"><a class="nav-link" href="/manager/time">Облік часу</a></li>
+                <li class="nav-item"><a class="nav-link" href="/manager/time">Час</a></li>
                 <?php endif; ?>
                 <?php if (\App\Core\Access::isDeptHead(Auth::role()) || \App\Core\Access::canManageTeams(Auth::role())): ?>
-                <li class="nav-item"><a class="nav-link" href="/team"><?= \App\Core\Access::isDeptHead(Auth::role()) ? 'Моя команда' : 'Відділи' ?></a></li>
+                <li class="nav-item"><a class="nav-link" href="/team"><?= \App\Core\Access::isDeptHead(Auth::role()) ? 'Команда' : 'Відділи' ?></a></li>
                 <?php endif; ?>
                 <?php if (\App\Core\Access::isUnitAdmin(Auth::role())): ?>
                 <li class="nav-item"><a class="nav-link<?= \App\Core\UnitNav::currentSection() !== null ? ' active' : '' ?>" href="/unit">Мій підрозділ</a></li>
@@ -92,6 +95,9 @@ document.addEventListener('change', function (e) {
     }
 });
 </script>
+<?php if (isset($_GET['hl']) && is_string($_GET['hl'])): ?>
+<script src="<?= \App\Core\View::e(\App\Core\View::asset('/assets/js/search-highlight.js')) ?>" defer></script>
+<?php endif; ?>
 <script src="<?= \App\Core\View::e(\App\Core\View::asset('/assets/js/user-select.js')) ?>" defer></script>
 <script src="<?= \App\Core\View::e(\App\Core\View::asset('/assets/js/template-apply.js')) ?>" defer></script>
 <script src="<?= \App\Core\View::e(\App\Core\View::asset('/assets/js/paste-images.js')) ?>" defer></script>

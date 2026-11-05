@@ -4,6 +4,9 @@ namespace App\Models;
 
 use App\Core\Config;
 use App\Core\Database;
+use App\Core\FullText;
+use App\Services\AttachmentService;
+use App\Services\LibraryTextExtractor;
 use App\Core\Unit;
 
 /**
@@ -204,8 +207,19 @@ class LibraryDocument
         }
         if ($query !== '') {
             $like = '%' . addcslashes($query, '\\%_') . '%';
-            $where[] = '(d.title LIKE ? OR d.description LIKE ? OR v.original_name LIKE ?)';
+            $cond = 'd.title LIKE ? OR d.description LIKE ? OR v.original_name LIKE ?';
             array_push($params, $like, $like, $like);
+            if (self::contentReady()) { // вміст файлу (поточної версії): слова з індексу, а короткі запити — підрядком
+                $ft = FullText::boolean($query);
+                if ($ft !== null) {
+                    $cond .= ' OR MATCH(v.content_text) AGAINST (? IN BOOLEAN MODE)';
+                    $params[] = $ft;
+                } else {
+                    $cond .= ' OR v.content_text LIKE ?';
+                    $params[] = $like;
+                }
+            }
+            $where[] = '(' . $cond . ')';
         }
         return [implode(' AND ', $where), $params];
     }
@@ -433,13 +447,52 @@ class LibraryDocument
 
     private static function insertVersion(int $documentId, int $number, array $file, ?string $comment, ?int $userId): void
     {
-        Database::connection()->prepare(
+        $pdo = Database::connection();
+        $pdo->prepare(
             'INSERT INTO library_versions (document_id, version_no, original_name, stored_name, mime_type, size_bytes, comment, uploaded_by)
              VALUES (:d, :n, :name, :stored, :mime, :size, :comment, :u)'
         )->execute([
             'd' => $documentId, 'n' => $number, 'name' => $file['name'], 'stored' => $file['stored_name'],
             'mime' => $file['mime'], 'size' => $file['size'], 'comment' => $comment, 'u' => $userId,
         ]);
+        self::indexContent((int) $pdo->lastInsertId(), (string) $file['stored_name'], (string) $file['name']);
+    }
+
+    // ------------------------------------------------------------------ пошук усередині файлів
+
+    /** Чи є стовпець тексту файлів (міграція 068). */
+    public static function contentReady(): bool
+    {
+        return FullText::ready('library_versions', 'ft_content');
+    }
+
+    /** Витягує текст версії й зберігає його для пошуку; помилка не заважає завантаженню файлу. */
+    public static function indexContent(int $versionId, string $storedName, string $originalName): bool
+    {
+        if (!self::contentReady()) {
+            return false;
+        }
+        try {
+            $path = AttachmentService::path($storedName);
+            $text = $path !== null && is_file($path) ? LibraryTextExtractor::extract($path, $originalName) : null;
+            Database::connection()->prepare('UPDATE library_versions SET content_text = :t, content_indexed = 1 WHERE id = :id')
+                ->execute(['t' => $text, 'id' => $versionId]);
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** Витягнутий текст версії (для фрагментів у результатах); null — тексту немає. */
+    public static function versionText(int $versionId): ?string
+    {
+        if (!self::contentReady()) {
+            return null;
+        }
+        $stmt = Database::connection()->prepare('SELECT content_text FROM library_versions WHERE id = :id');
+        $stmt->execute(['id' => $versionId]);
+        $t = $stmt->fetchColumn();
+        return is_string($t) && $t !== '' ? $t : null;
     }
 
     public static function update(int $id, string $title, ?string $description, ?int $categoryId, string $visibility, ?int $userId, ?string $unitOu = null): void

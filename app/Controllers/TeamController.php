@@ -31,13 +31,17 @@ class TeamController
             $this->deny();
         }
         $heads = Team::ready() ? Database::connection()->query(
-            "SELECT u.id, u.full_name, u.email, u.is_active, m.full_name AS superior_name,
-                    (SELECT COUNT(*) FROM users s WHERE s.manager_id = u.id AND s.is_active = 1) AS direct_count
-               FROM users u JOIN roles r ON r.id = u.role_id LEFT JOIN users m ON m.id = u.manager_id
+            "SELECT u.id, u.full_name, u.email, u.is_active,
+                    NULL AS direct_count
+               FROM users u JOIN roles r ON r.id = u.role_id
               WHERE r.code = 'dept_head' ORDER BY u.is_active DESC, u.full_name"
         )->fetchAll() : [];
+        $names = $this->managerNames();
         foreach ($heads as &$h) {
-            $h['total_count'] = count(Team::subordinateIds((int) $h['id']));
+            $h['superior_name'] = $names[(int) $h['id']] ?? null;
+            $sub = Team::subordinateIds((int) $h['id']);
+            $h['total_count'] = count($sub);
+            $h['direct_count'] = count(array_filter($sub, static fn($sid) => in_array((int) $h['id'], Team::managerIds($sid), true)));
         }
         unset($h);
         View::render('team/index', ['heads' => $heads, 'tree' => Team::ready() ? $this->forest() : [], 'ready' => Team::ready(), 'error' => $_GET['error'] ?? null, 'success' => $_GET['success'] ?? null]);
@@ -73,12 +77,32 @@ class TeamController
         return $u + ['children' => $kids, 'total' => array_sum(array_map(static fn($k) => 1 + $k['total'], $kids))];
     }
 
+    /** Імена керівників: [user_id => «Іван, Петро»] (для всіх, у кого вони є). */
+    private function managerNames(): array
+    {
+        $out = [];
+        foreach (Database::connection()->query('SELECT id, full_name FROM users')->fetchAll() as $r) {
+            $names[(int) $r['id']] = $r['full_name'];
+        }
+        foreach (array_keys($names ?? []) as $uid) {
+            $mg = array_map(static fn($m) => $names[$m] ?? null, Team::managerIds($uid));
+            $mg = array_filter($mg);
+            if ($mg) {
+                $out[$uid] = implode(', ', $mg);
+            }
+        }
+        return $out;
+    }
+
+    /** Дочірні вузли дерева; користувач із кількома керівниками з'являється під кожним із них. */
     private function childrenMap(array $users): array
     {
         $children = [];
         foreach ($users as $id => $u) {
-            if ($u['manager_id'] !== null && isset($users[(int) $u['manager_id']])) {
-                $children[(int) $u['manager_id']][] = $id;
+            foreach (Team::managerIds((int) $id) as $mid) {
+                if (isset($users[$mid])) {
+                    $children[$mid][] = $id;
+                }
             }
         }
         return $children;
@@ -93,7 +117,8 @@ class TeamController
         foreach ($users as $id => $u) {
             $topHead = $u['role_code'] === 'it_manager';
             // корінь: Керівник підрозділу, або керівник відділу без активного керівника
-            if ($topHead || ($u['role_code'] === 'dept_head' && ($u['manager_id'] === null || !isset($users[(int) $u['manager_id']])))) {
+            $hasActiveManager = (bool) array_filter(Team::managerIds((int) $id), static fn($m) => isset($users[$m]));
+            if ($topHead || ($u['role_code'] === 'dept_head' && !$hasActiveManager)) {
                 $roots[] = $this->node($users, $children, $id, [$id => true], 0);
             }
         }
@@ -134,6 +159,35 @@ class TeamController
         ]);
     }
 
+    /**
+     * Id співробітників підрозділу (OU) поточного користувача, яких він може додавати до команди; null — обмеження немає
+     * (глобальний адміністратор або підрозділ користувача не задано). Входять той самий, вкладені й батьківські OU.
+     * @return int[]|null
+     */
+    private function unitScopeIds(): ?array
+    {
+        if (Access::isAdmin(Auth::role())) {
+            return null;
+        }
+        $ou = \App\Core\Unit::userOu((int) Auth::id());
+        if ($ou === null) {
+            return null;
+        }
+        // «Свій підрозділ» — той самий OU, вкладені в нього й батьківські (Керівник відділу може сидіти у вужчому OU, ніж його колеги).
+        $lo = mb_strtolower($ou);
+        $ids = [];
+        foreach (Database::connection()->query('SELECT x.id, ' . \App\Core\Unit::ouExpr('x') . ' AS ou FROM users x')->fetchAll() as $r) {
+            $o = mb_strtolower(trim((string) $r['ou']));
+            if ($o === '') {
+                continue;
+            }
+            if ($o === $lo || str_ends_with($o, ',' . $lo) || str_ends_with($lo, ',' . $o)) {
+                $ids[] = (int) $r['id'];
+            }
+        }
+        return $ids;
+    }
+
     public function show(array $params): void
     {
         Auth::requireLogin();
@@ -145,34 +199,62 @@ class TeamController
         if ($ids) {
             $in = implode(',', array_map('intval', $ids));
             $rows = $pdo->query(
-                "SELECT u.id, u.full_name, u.email, u.manager_id, mg.full_name AS manager_name, r.name AS role_name,
+                "SELECT u.id, u.full_name, u.email, r.name AS role_name,
                         (SELECT COUNT(*) FROM tasks t JOIN task_statuses s ON s.id = t.status_id WHERE t.assignee_id = u.id AND s.is_closed = 0) AS open_tasks,
                         (SELECT COUNT(*) FROM tickets k WHERE (k.requester_user_id = u.id OR k.assigned_operator_id = u.id) AND k.status NOT IN ('resolved','closed')) AS open_tickets,
                         (SELECT COALESCE(SUM(l.hours), 0) FROM time_logs l WHERE l.user_id = u.id AND l.log_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS month_hours
-                   FROM users u JOIN roles r ON r.id = u.role_id LEFT JOIN users mg ON mg.id = u.manager_id
+                   FROM users u JOIN roles r ON r.id = u.role_id
                   WHERE u.id IN ({$in}) ORDER BY u.full_name"
             )->fetchAll();
+            $names = [];
+            foreach ($pdo->query('SELECT id, full_name FROM users')->fetchAll() as $n) {
+                $names[(int) $n['id']] = $n['full_name'];
+            }
+            foreach ($rows as &$r) {
+                $mids = Team::managerIds((int) $r['id']);
+                $r['direct'] = in_array($id, $mids, true);
+                $r['others'] = implode(', ', array_filter(array_map(static fn($m) => $m !== $id ? ($names[$m] ?? null) : null, $mids)));
+            }
+            unset($r);
         }
-        // Кого можна додати: активні, не адміністратори/керівники ІТ, не сам керівник, не його керівники (без циклів); без чужого керівника
-        // (адміністратор і Керівник підрозділу можуть переводити й тих, у кого керівник уже є).
+        // Кого можна додати: активні, не адміністратори/керівники ІТ, не сам керівник, не його керівники (без циклів).
+        // Користувач може належати кільком відділам. Якщо в того, хто складає команду, задано підрозділ, він бачить усіх
+        // співробітників свого підрозділу (і тих, у кого вже є інший керівник); без підрозділу Керівник відділу бачить
+        // лише тих, у кого керівника ще немає.
         $canMove = Access::canManageTeams(Auth::role());
         $exclude = array_merge([$id], $ids, $this->ancestors($id));
         $cands = [];
+        $unitIds = $this->unitScopeIds();
+        $diag = ['outside' => 0, 'busy' => 0, 'inTeam' => 0];
+        $allNames = [];
+        foreach ($pdo->query('SELECT id, full_name FROM users')->fetchAll() as $n) {
+            $allNames[(int) $n['id']] = $n['full_name'];
+        }
         foreach ($pdo->query(
-            "SELECT u.id, u.full_name, u.email, u.manager_id, r.code AS role_code, r.name AS role_name, mg.full_name AS manager_name
-               FROM users u JOIN roles r ON r.id = u.role_id LEFT JOIN users mg ON mg.id = u.manager_id
+            "SELECT u.id, u.full_name, u.email, r.code AS role_code, r.name AS role_name
+               FROM users u JOIN roles r ON r.id = u.role_id
               WHERE u.is_active = 1 ORDER BY u.full_name"
         )->fetchAll() as $u) {
             if (in_array((int) $u['id'], $exclude, true) || in_array($u['role_code'], self::NOT_SUBORDINATE, true)) {
                 continue;
             }
-            if ($u['manager_id'] !== null && !$canMove) {
+            if ($unitIds !== null && !in_array((int) $u['id'], $unitIds, true)) {
+                $diag['outside']++;
                 continue;
             }
+            $mids = Team::managerIds((int) $u['id']);
+            if (in_array($id, $mids, true) || ($mids && !$canMove && $unitIds === null)) {
+                $diag[in_array($id, $mids, true) ? 'inTeam' : 'busy']++;
+                continue;
+            }
+            $u['manager_name'] = $mids ? implode(', ', array_filter(array_map(static fn($m) => $allNames[$m] ?? null, $mids))) : null;
             $cands[] = $u;
         }
         $superiors = $canMove ? $pdo->query("SELECT u.id, u.full_name FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = 'it_manager' AND u.is_active = 1 ORDER BY u.full_name")->fetchAll() : [];
+        $superiorIds = array_values(array_intersect(Team::managerIds($id), array_map(static fn($x) => (int) $x['id'], $superiors)));
         View::render('team/show', [
+            'diag' => $diag, 'unitLabel' => $unitIds !== null ? \App\Core\LdapDn::ouLabel((string) \App\Core\Unit::userOu((int) Auth::id())) : null,
+            'superiorIds' => $superiorIds, 'managerNames' => array_map(static fn($m) => $allNames[$m] ?? '', Team::managerIds($id)),
             'tree' => $this->subtree($id),
             'head' => $head, 'rows' => $rows, 'candidates' => $cands, 'canMove' => $canMove, 'superiors' => $superiors,
             'error' => $_GET['error'] ?? null, 'success' => $_GET['success'] ?? null,
@@ -186,7 +268,7 @@ class TeamController
         $hid = (int) $head['id'];
         $uid = (int) ($_POST['user_id'] ?? 0);
         $pdo = Database::connection();
-        $stmt = $pdo->prepare('SELECT u.id, u.full_name, u.manager_id, u.is_active, r.code AS role_code FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = :id');
+        $stmt = $pdo->prepare('SELECT u.id, u.full_name, u.is_active, r.code AS role_code FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = :id');
         $stmt->execute(['id' => $uid]);
         $u = $stmt->fetch();
         if (!$u || (int) $u['is_active'] !== 1) {
@@ -198,13 +280,20 @@ class TeamController
         if (in_array($uid, $this->ancestors($hid), true)) {
             $this->back($hid, 'error', 'Це створило б замкнене підпорядкування: користувач уже вище в ієрархії.');
         }
-        if ($u['manager_id'] !== null && (int) $u['manager_id'] !== $hid && !Access::canManageTeams(Auth::role())) {
-            $this->back($hid, 'error', 'У цього користувача вже є керівник — переведення виконує Керівник підрозділу або адміністратор.');
+        $unitIds = $this->unitScopeIds();
+        if ($unitIds !== null && !in_array($uid, $unitIds, true)) {
+            $this->back($hid, 'error', 'Додавати можна лише співробітників вашого підрозділу.');
         }
-        $pdo->prepare('UPDATE users SET manager_id = :m WHERE id = :id')->execute(['m' => $hid, 'id' => $uid]);
-        Team::reset();
-        Audit::log('user', $uid, 'manager_set', (int) Auth::id(), ['manager_id' => $hid, 'previous' => $u['manager_id']]);
-        $this->back($hid, 'success', $u['full_name'] . ' додано до команди.');
+        $existing = Team::managerIds($uid);
+        if (in_array($hid, $existing, true)) {
+            $this->back($hid, 'error', 'Користувач уже в цій команді.');
+        }
+        if ($existing && !Access::canManageTeams(Auth::role()) && $unitIds === null) {
+            $this->back($hid, 'error', 'У цього користувача вже є керівник — до другого відділу його додає Керівник підрозділу або адміністратор.');
+        }
+        Team::link($uid, $hid);
+        Audit::log('user', $uid, 'manager_added', (int) Auth::id(), ['manager_id' => $hid, 'other_managers' => implode(',', $existing)]);
+        $this->back($hid, 'success', $u['full_name'] . ' додано до команди' . ($existing ? ' (також залишається в інших відділах)' : '') . '.');
     }
 
     public function remove(array $params): void
@@ -214,17 +303,17 @@ class TeamController
         $hid = (int) $head['id'];
         $uid = (int) ($_POST['user_id'] ?? 0);
         $pdo = Database::connection();
-        $stmt = $pdo->prepare('SELECT manager_id, full_name FROM users WHERE id = :id');
+        $stmt = $pdo->prepare('SELECT full_name FROM users WHERE id = :id');
         $stmt->execute(['id' => $uid]);
-        $u = $stmt->fetch();
-        // Знімати можна лише прямого підлеглого цього керівника (вкладених знімає їхній безпосередній керівник).
-        if (!$u || (int) $u['manager_id'] !== $hid) {
+        $name = $stmt->fetchColumn();
+        // Знімати можна лише прямого підлеглого цього керівника (вкладених знімає їхній безпосередній керівник);
+        // зв'язки з іншими відділами користувача лишаються.
+        if ($name === false || !in_array($hid, Team::managerIds($uid), true)) {
             $this->back($hid, 'error', 'Користувач не є прямим підлеглим цього керівника.');
         }
-        $pdo->prepare('UPDATE users SET manager_id = NULL WHERE id = :id')->execute(['id' => $uid]);
-        Team::reset();
-        Audit::log('user', $uid, 'manager_cleared', (int) Auth::id(), ['manager_id' => $hid]);
-        $this->back($hid, 'success', $u['full_name'] . ' знято з команди.');
+        Team::unlink($uid, $hid);
+        Audit::log('user', $uid, 'manager_removed', (int) Auth::id(), ['manager_id' => $hid]);
+        $this->back($hid, 'success', $name . ' знято з команди.');
     }
 
     /** Підпорядкування самого Керівника відділу Керівнику підрозділу. */
@@ -236,18 +325,22 @@ class TeamController
         }
         $head = $this->headOrFail((int) $params['id']);
         $hid = (int) $head['id'];
-        $sup = (int) ($_POST['superior_id'] ?? 0);
+        $want = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['superior_ids'] ?? [])), static fn($i) => $i > 0)));
         $pdo = Database::connection();
-        if ($sup > 0) {
-            $stmt = $pdo->prepare("SELECT 1 FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = :id AND r.code = 'it_manager' AND u.is_active = 1");
-            $stmt->execute(['id' => $sup]);
-            if (!$stmt->fetchColumn()) {
-                $this->back($hid, 'error', 'Керівником Керівника відділу може бути лише активний Керівник підрозділу.');
-            }
+        $okIds = $want ? array_map('intval', $pdo->query("SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = 'it_manager' AND u.is_active = 1 AND u.id IN (" . implode(',', $want) . ')')->fetchAll(\PDO::FETCH_COLUMN)) : [];
+        if (count($okIds) !== count($want)) {
+            $this->back($hid, 'error', 'Керівником Керівника відділу може бути лише активний Керівник підрозділу.');
         }
-        $pdo->prepare('UPDATE users SET manager_id = :m WHERE id = :id')->execute(['m' => $sup > 0 ? $sup : null, 'id' => $hid]);
-        Team::reset();
-        Audit::log('user', $hid, 'manager_set', (int) Auth::id(), ['manager_id' => $sup > 0 ? $sup : null]);
+        // змінюємо лише зв'язки з Керівниками підрозділу; підпорядкування іншим Керівникам відділів не чіпаємо
+        $allIt = array_map('intval', $pdo->query("SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = 'it_manager'")->fetchAll(\PDO::FETCH_COLUMN));
+        $before = array_values(array_intersect(Team::managerIds($hid), $allIt));
+        foreach (array_diff($before, $okIds) as $m) {
+            Team::unlink($hid, $m);
+        }
+        foreach (array_diff($okIds, $before) as $m) {
+            Team::link($hid, $m);
+        }
+        Audit::log('user', $hid, 'managers_set', (int) Auth::id(), ['superiors' => implode(',', $okIds), 'previous' => implode(',', $before)]);
         $this->back($hid, 'success', 'Підпорядкування збережено.');
     }
 
@@ -263,7 +356,7 @@ class TeamController
             echo 'Потрібна міграція 063 (запустіть update.sh).';
             exit;
         }
-        $stmt = Database::connection()->prepare("SELECT u.*, m.full_name AS superior_name FROM users u JOIN roles r ON r.id = u.role_id LEFT JOIN users m ON m.id = u.manager_id WHERE u.id = :id AND r.code = 'dept_head'");
+        $stmt = Database::connection()->prepare("SELECT u.* FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = :id AND r.code = 'dept_head'");
         $stmt->execute(['id' => $id]);
         $head = $stmt->fetch();
         if (!$head) {
@@ -271,24 +364,31 @@ class TeamController
             echo 'Керівника відділу не знайдено.';
             exit;
         }
+        $names = array_filter(array_map(static function ($m) {
+            $s = Database::connection()->prepare('SELECT full_name FROM users WHERE id = :id');
+            $s->execute(['id' => $m]);
+            return $s->fetchColumn() ?: null;
+        }, Team::managerIds($id)));
+        $head['superior_name'] = $names ? implode(', ', $names) : null;
         return $head;
     }
 
-    /** Ланцюг керівників вгору від користувача (для заборони циклів). @return int[] */
+    /** Усі керівники вгору по всіх гілках підпорядкування (для заборони циклів). @return int[] */
     private function ancestors(int $userId): array
     {
         $out = [];
-        $cur = $userId;
-        $pdo = Database::connection();
-        for ($i = 0; $i < Team::MAX_DEPTH + 2; $i++) {
-            $stmt = $pdo->prepare('SELECT manager_id FROM users WHERE id = :id');
-            $stmt->execute(['id' => $cur]);
-            $m = $stmt->fetchColumn();
-            if (!$m || in_array((int) $m, $out, true)) {
-                break;
+        $level = [$userId];
+        for ($i = 0; $i < Team::MAX_DEPTH + 2 && $level; $i++) {
+            $next = [];
+            foreach ($level as $uid) {
+                foreach (Team::managerIds($uid) as $m) {
+                    if (!in_array($m, $out, true) && $m !== $userId) {
+                        $out[] = $m;
+                        $next[] = $m;
+                    }
+                }
             }
-            $out[] = (int) $m;
-            $cur = (int) $m;
+            $level = $next;
         }
         return $out;
     }

@@ -133,6 +133,17 @@ return (function (): array {
         'wiki' => [
             'dir' => __DIR__ . '/../storage/wiki',
         ],
+        // Веб-сесія: SESSION_LIFETIME_MINUTES — скільки хвилин без дій користувач лишається в системі (за замовчуванням 120 = 2 год;
+        // від 15 до 43200). Файли сесій лежать у storage/sessions, щоб їх не чистив системний cron за коротким php.ini-значенням.
+        'session' => [
+            'lifetime_minutes' => max(15, min(43200, (int) ($env('SESSION_LIFETIME_MINUTES', '120')))),
+        ],
+        // Оновлення зі сторінки адміністратора (App\Services\UpdateService): приймання й застосування архіву з браузера
+        // вмикається ЛИШЕ тут (UPDATE_FROM_WEB=true), бо це заміна коду; перевірка нової версії працює завжди.
+        'update' => [
+            'web' => $env('UPDATE_FROM_WEB'),
+        ],
+
         // Резервні копії (App\Services\BackupService): архіви tar.gz у storage/backups — поза веб-коренем.
         'backup' => [
             'dir' => $env('BACKUP_DIR', __DIR__ . '/../storage/backups'),

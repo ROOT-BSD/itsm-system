@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (parent_id) REFERENCES projects(id) ON DELETE SET NULL,
     FOREIGN KEY (created_by) REFERENCES users(id),
-    FOREIGN KEY (responsible_user_id) REFERENCES users(id) ON DELETE SET NULL
+    FOREIGN KEY (responsible_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FULLTEXT KEY ft_name_description (name, description)
 ) ENGINE=InnoDB;
 
 -- Учасники проєкту: користувачі, яким автор/відповідальний/адміністратор ЯВНО надали доступ до проєкту (крім автора й
@@ -291,7 +292,8 @@ CREATE TABLE IF NOT EXISTS comments (
     body TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-    FOREIGN KEY (author_id) REFERENCES users(id)
+    FOREIGN KEY (author_id) REFERENCES users(id),
+    FULLTEXT KEY ft_body (body)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS time_logs (
@@ -375,7 +377,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     FOREIGN KEY (queue_id) REFERENCES ticket_queues(id),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
     FOREIGN KEY (assigned_operator_id) REFERENCES users(id),
-    FOREIGN KEY (requester_user_id) REFERENCES users(id)
+    FOREIGN KEY (requester_user_id) REFERENCES users(id),
+    FULLTEXT KEY ft_subject_description (subject, description)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS ticket_comments (
@@ -385,7 +388,8 @@ CREATE TABLE IF NOT EXISTS ticket_comments (
     author_id INT NULL,
     body TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+    FULLTEXT KEY ft_body (body)
 ) ENGINE=InnoDB;
 
 -- Вкладення до тікетів і задач (модуль «файлові документи», App\Services\AttachmentService).
@@ -527,7 +531,8 @@ CREATE TABLE IF NOT EXISTS library_documents (
     CONSTRAINT fk_library_documents_updated FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_library_documents_category (category_id),
     INDEX idx_library_documents_creator (created_by),
-    INDEX idx_library_documents_title (title)
+    INDEX idx_library_documents_title (title),
+    FULLTEXT KEY ft_title_description (title, description)
 ) ENGINE=InnoDB;
 
 -- Версії файлу документа. Поточна — з найбільшим version_no; старі зберігаються й доступні за прямим посиланням.
@@ -541,11 +546,14 @@ CREATE TABLE IF NOT EXISTS library_versions (
     mime_type VARCHAR(100) NOT NULL,
     size_bytes INT UNSIGNED NOT NULL,
     comment VARCHAR(255) NULL,
+    content_text MEDIUMTEXT NULL,
+    content_indexed TINYINT(1) NOT NULL DEFAULT 0,
     uploaded_by INT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_library_versions_document FOREIGN KEY (document_id) REFERENCES library_documents(id) ON DELETE CASCADE,
     CONSTRAINT fk_library_versions_user FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
-    UNIQUE KEY uq_library_versions_doc_no (document_id, version_no)
+    UNIQUE KEY uq_library_versions_doc_no (document_id, version_no),
+    FULLTEXT KEY ft_content (content_text)
 ) ENGINE=InnoDB;
 
 -- Форум: розділи, теми, повідомлення.
@@ -577,7 +585,8 @@ CREATE TABLE IF NOT EXISTS forum_topics (
     CONSTRAINT fk_forum_topics_board FOREIGN KEY (board_id) REFERENCES forum_boards(id) ON DELETE CASCADE,
     CONSTRAINT fk_forum_topics_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_forum_topics_last_by FOREIGN KEY (last_post_by) REFERENCES users(id) ON DELETE SET NULL,
-    INDEX idx_forum_topics_board (board_id, is_pinned, last_post_at)
+    INDEX idx_forum_topics_board (board_id, is_pinned, last_post_at),
+    FULLTEXT KEY ft_title (title)
 ) ENGINE=InnoDB;
 
 -- Повідомлення. Перше повідомлення теми (найменший id) — її початковий текст. Текст — Markdown (безпечна підмножина).
@@ -592,7 +601,8 @@ CREATE TABLE IF NOT EXISTS forum_posts (
     CONSTRAINT fk_forum_posts_topic FOREIGN KEY (topic_id) REFERENCES forum_topics(id) ON DELETE CASCADE,
     CONSTRAINT fk_forum_posts_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_forum_posts_edited FOREIGN KEY (edited_by) REFERENCES users(id) ON DELETE SET NULL,
-    INDEX idx_forum_posts_topic (topic_id, id)
+    INDEX idx_forum_posts_topic (topic_id, id),
+    FULLTEXT KEY ft_body (body)
 ) ENGINE=InnoDB;
 
 -- Відписка від сповіщень по окремій темі форуму (міграція 035).
@@ -892,6 +902,70 @@ CREATE TABLE IF NOT EXISTS task_date_changes (
 
 -- Облік застосованих міграцій (bin/migrate.php). Нова інсталяція вже містить усе до міграції 040 включно
 -- (database/migrations/legacy/), тож позначаємо їх застосованими; нові міграції (053+) накочує update.sh.
+-- Запити на зміни (Change) із погодженням (міграція 069).
+CREATE TABLE IF NOT EXISTS change_requests (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(200) NOT NULL,
+    change_type ENUM('standard','normal','emergency') NOT NULL DEFAULT 'normal',
+    risk ENUM('low','medium','high') NOT NULL DEFAULT 'medium',
+    status ENUM('draft','pending','approved','rejected','in_progress','implemented','rolled_back','cancelled') NOT NULL DEFAULT 'draft',
+    description TEXT NOT NULL,
+    reason TEXT NULL,
+    impact TEXT NULL,
+    rollback_plan TEXT NULL,
+    window_start DATETIME NULL,
+    window_end DATETIME NULL,
+    requester_id INT NULL,
+    ticket_id INT NULL,
+    submitted_at DATETIME NULL,
+    decided_at DATETIME NULL,
+    started_at DATETIME NULL,
+    finished_at DATETIME NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_change_requester FOREIGN KEY (requester_id) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_change_ticket FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE SET NULL,
+    KEY idx_change_status (status),
+    KEY idx_change_window (window_start, window_end),
+    KEY idx_change_requester (requester_id),
+    FULLTEXT KEY ft_change_text (title, description)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS change_approvals (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    change_id INT NOT NULL,
+    approver_id INT NOT NULL,
+    decision ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    comment VARCHAR(500) NULL,
+    decided_at DATETIME NULL,
+    CONSTRAINT fk_change_appr_change FOREIGN KEY (change_id) REFERENCES change_requests(id) ON DELETE CASCADE,
+    CONSTRAINT fk_change_appr_user FOREIGN KEY (approver_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY uq_change_approver (change_id, approver_id),
+    KEY idx_change_appr_user (approver_id, decision)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS change_comments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    change_id INT NOT NULL,
+    user_id INT NULL,
+    body TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_change_comment_change FOREIGN KEY (change_id) REFERENCES change_requests(id) ON DELETE CASCADE,
+    CONSTRAINT fk_change_comment_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    KEY idx_change_comment (change_id, id)
+) ENGINE=InnoDB;
+
+-- Кілька керівників відділів у користувача (міграція 070); users.manager_id — основний керівник
+CREATE TABLE IF NOT EXISTS user_managers (
+    user_id    INT NOT NULL,
+    manager_id INT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, manager_id),
+    KEY idx_user_managers_manager (manager_id),
+    CONSTRAINT fk_user_managers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_managers_manager FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version VARCHAR(20) NOT NULL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
@@ -1044,4 +1118,8 @@ INSERT IGNORE INTO schema_migrations (version, name, applied_via) VALUES
 ('063', 'department_head_role', 'baseline'),
 ('064', 'rename_it_manager_role', 'baseline'),
 ('065', 'task_archive', 'baseline'),
-('066', 'head_overdue_reminder', 'baseline');
+('066', 'head_overdue_reminder', 'baseline'),
+('067', 'fulltext_search', 'baseline'),
+('068', 'library_content_search', 'baseline'),
+('069', 'change_requests', 'baseline'),
+('070', 'user_managers', 'baseline');

@@ -69,7 +69,20 @@ class LibraryController
             'unitLabel' => $document['visibility'] === 'unit' ? (string) ($document['unit_ou'] ?? '') : '',
             'currentCategory' => $document['category_id'] !== null ? (string) $document['category_id'] : 'none',
             'query' => '',
+            'contentHits' => $this->contentHits((int) $document['id']),
         ]);
+    }
+
+    /** Збіги у тексті поточної версії файлу, якщо сторінку відкрито з пошуку (?hl=…). @return string[] */
+    private function contentHits(int $documentId): array
+    {
+        $hl = trim((string) ($_GET['hl'] ?? ''));
+        if ($hl === '' || mb_strlen($hl) > 100) {
+            return [];
+        }
+        $latest = LibraryDocument::latestVersion($documentId);
+        $text = $latest !== null ? LibraryDocument::versionText((int) $latest['id']) : null;
+        return $text === null ? [] : \App\Services\SearchService::contentSnippets($text, $hl, 8);
     }
 
     // ------------------------------------------------------------------ створення й редагування

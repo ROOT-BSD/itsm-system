@@ -131,6 +131,7 @@ $router->get('/projects/{project_id}/tasks/create', fn($p) => $tasks->showCreate
 $router->post('/projects/{project_id}/tasks', fn($p) => $tasks->store($p));
 $router->get('/tasks/{id}', fn($p) => $tasks->show($p));
 $router->post('/tasks/{id}/status', fn($p) => $tasks->updateStatus($p));
+$router->post('/tasks/archive-bulk', fn() => $tasks->archiveBulk());
 $router->post('/tasks/{id}/archive', fn($p) => $tasks->archive($p));
 $router->post('/tasks/{id}/unarchive', fn($p) => $tasks->archive($p + ['_action' => 'unarchive']));
 $router->post('/tasks/{id}/dates', fn($p) => $tasks->updateDates($p));
@@ -206,6 +207,18 @@ $router->post('/tickets/{id}/links', fn($p) => $tickets->addLink($p));
 $router->post('/tickets/{id}/links/{link}/delete', fn($p) => $tickets->removeLink($p));
 $router->post('/tickets/{id}/time', fn($p) => $tickets->addTime($p));
 $router->post('/tickets/{id}/time/{log}/delete', fn($p) => $tickets->deleteTime($p));
+// Запити на зміни (Change) із погодженням. Статичні адреси — ПЕРЕД «/changes/{id}».
+$changes = static fn() => new \App\Controllers\ChangeController();
+$router->get('/changes', fn() => $changes()->index());
+$router->get('/changes/new', fn() => $changes()->create());
+$router->post('/changes', fn() => $changes()->store());
+$router->get('/changes/{id}', fn($p) => $changes()->show($p));
+$router->get('/changes/{id}/edit', fn($p) => $changes()->edit($p));
+$router->post('/changes/{id}', fn($p) => $changes()->update($p));
+$router->post('/changes/{id}/submit', fn($p) => $changes()->submit($p));
+$router->post('/changes/{id}/decide', fn($p) => $changes()->decide($p));
+$router->post('/changes/{id}/transition', fn($p) => $changes()->transition($p));
+$router->post('/changes/{id}/comment', fn($p) => $changes()->comment($p));
 $router->get('/reply-templates', fn() => (new \App\Controllers\ReplyTemplateController())->index());
 $router->post('/reply-templates', fn() => (new \App\Controllers\ReplyTemplateController())->save());
 $router->post('/reply-templates/{id}/delete', fn($p) => (new \App\Controllers\ReplyTemplateController())->delete($p));
@@ -314,6 +327,11 @@ $router->post('/admin/backup/restore', fn() => (new \App\Controllers\BackupContr
 $router->get('/admin/backup/{stamp}/download', fn($p) => (new \App\Controllers\BackupController())->download($p));
 $router->post('/admin/backup/{stamp}/verify', fn($p) => (new \App\Controllers\BackupController())->verify($p));
 $router->post('/admin/backup/{stamp}/delete', fn($p) => (new \App\Controllers\BackupController())->delete($p));
+$router->get('/admin/update', fn() => (new \App\Controllers\UpdateController())->index());
+$router->post('/admin/update/check', fn() => (new \App\Controllers\UpdateController())->check());
+$router->post('/admin/update/upload', fn() => (new \App\Controllers\UpdateController())->upload());
+$router->post('/admin/update/apply', fn() => (new \App\Controllers\UpdateController())->apply());
+$router->post('/admin/update/discard', fn() => (new \App\Controllers\UpdateController())->discard());
 $router->get('/admin/status', fn() => (new AdminController())->status());
 $router->get('/admin/audit/export', fn() => (new \App\Controllers\ExportController())->audit());
 $router->get('/admin/audit', function () {

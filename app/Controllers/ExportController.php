@@ -66,14 +66,16 @@ class ExportController
             $rows[] = [
                 (int) $t['id'], $t['title'], $t['project_name'], $t['type_name'], $t['status_name'],
                 $t['priority'], $t['assignee_name'] ?? '', \App\Core\TimeFormat::date($t['start_date'] ?? null), \App\Core\TimeFormat::date($t['due_date'] ?? null),
-                $t['estimated_hours'] !== null ? (float) $t['estimated_hours'] : '',
-                $t['actual_hours'] !== null ? (float) $t['actual_hours'] : '',
+                $t['estimated_hours'] !== null ? \App\Core\TimeFormat::hm((float) $t['estimated_hours']) : '',
+                $t['estimated_hours'] !== null ? \App\Core\TimeFormat::toMinutes((float) $t['estimated_hours']) : '',
+                $t['actual_hours'] !== null ? \App\Core\TimeFormat::hm((float) $t['actual_hours']) : '',
+                $t['actual_hours'] !== null ? \App\Core\TimeFormat::toMinutes((float) $t['actual_hours']) : '',
                 \App\Core\TimeFormat::dateTime((string) $t['created_at']),
             ];
         }
         TableExport::send($closed ? 'tasks-closed' : 'tasks', $_GET['format'] ?? '', [
             '№', 'Назва', 'Проєкт', 'Тип', 'Статус', 'Пріоритет', 'Виконавець',
-            'Початок', 'Термін', 'Оцінка, год', 'Витрачено, год', 'Створено',
+            'Початок', 'Термін', 'Оцінка', 'Оцінка, хв', 'Витрачено', 'Витрачено, хв', 'Створено',
         ], $rows, $closed ? 'Закриті задачі' : 'Задачі');
     }
 

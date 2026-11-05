@@ -58,11 +58,14 @@ $pageUrl = static function (int $p) use ($currentCategory, $query, $scope): stri
                             <?php if (str_starts_with((string) $d['mime_type'], 'image/')): ?>
                                 <a href="/library/<?= (int) $d['id'] ?>" class="float-start me-2"><img src="/library/<?= (int) $d['id'] ?>/download?thumb=1" alt="" class="library-thumb" loading="lazy"></a>
                             <?php endif; ?>
-                            <a href="/library/<?= (int) $d['id'] ?>" class="fw-semibold"><?= $e($d['title']) ?></a>
+                            <a href="/library/<?= (int) $d['id'] ?><?= $query !== '' ? '?hl=' . rawurlencode($query) : '' ?>" class="fw-semibold"><?= $e($d['title']) ?></a>
                             <?php if ($d['visibility'] !== 'all'): ?>
                                 <span class="badge bg-secondary" title="<?= $e($d['visibility'] === 'unit' ? 'Бачить підрозділ: ' . ($d['unit_ou'] ?? '') : (\App\Models\LibraryDocument::visibilities()[$d['visibility']] ?? '')) ?>"><?= ['admin' => 'адмін', 'staff' => 'персонал', 'private' => 'особистий', 'unit' => 'підрозділ'][$d['visibility']] ?? $e($d['visibility']) ?></span>
                             <?php endif; ?>
                             <div class="small text-muted"><?= $e(strtoupper(pathinfo($d['original_name'], PATHINFO_EXTENSION))) ?> · <?= $e($human((int) $d['size_bytes'])) ?><?php if (in_array($d['visibility'], ['private', 'unit'], true) && !empty($d['created_by_name'])): ?> · автор: <?= $e($d['created_by_name']) ?><?php endif; ?></div>
+                            <?php if ($query !== '' && ($hit = \App\Services\SearchService::librarySnippet($d, $query)) !== ''): ?>
+                                <div class="small mt-1"><?= $hit ?></div>
+                            <?php endif; ?>
                         </td>
                         <td class="small"><?= $d['category_name'] !== null ? $e($d['category_name']) : '<span class="text-muted">—</span>' ?></td>
                         <td class="text-nowrap">v<?= (int) $d['version_no'] ?></td>

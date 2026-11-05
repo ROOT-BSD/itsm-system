@@ -7,6 +7,9 @@ section "3. Каталоги сховища, кеш шрифтів, LibreOffice"
 # Файли вкладень лежать у storage/uploads (поза веб-коренем) — директорія має існувати.
 mkdir -p "${SCRIPT_DIR}/storage/uploads" && ok "Директорія storage/uploads на місці"
 
+# Файли веб-сесій (SESSION_LIFETIME_MINUTES): власна тека, щоб системний cron не чистив їх за коротким php.ini-значенням.
+mkdir -p "${SCRIPT_DIR}/storage/sessions" && chmod 700 "${SCRIPT_DIR}/storage/sessions" 2>/dev/null && ok "Директорія storage/sessions на місці (файли сесій)"
+
 # Журнал необроблених помилок застосунку (App\Core\ErrorHandler): у нього потрапляє причина кожної «помилки 500».
 mkdir -p "${SCRIPT_DIR}/storage/logs" && ok "Директорія storage/logs на місці (журнал помилок застосунку)"
 

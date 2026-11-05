@@ -194,6 +194,41 @@ class TaskController
         exit;
     }
 
+    /** Масове відправлення закритих задач від керівництва в архів (Керівник підрозділу, адміністратор). */
+    public function archiveBulk(): void
+    {
+        Auth::requireLogin();
+        $back = (string) ($_POST['back'] ?? '/tasks');
+        if (!preg_match('#^/(tasks|projects/\d+)$#', $back)) {
+            $back = '/tasks';
+        }
+        if (!Task::archiveReady() || !Task::canArchive(Auth::role())) {
+            header('Location: ' . $back . '?bulk_err=' . urlencode('Архівувати задачі може лише Керівник підрозділу або адміністратор'));
+            exit;
+        }
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['ids'] ?? [])))));
+        if (!$ids) {
+            header('Location: ' . $back . '?bulk_err=' . urlencode('Не вибрано жодної задачі'));
+            exit;
+        }
+        $done = 0;
+        $skipped = 0;
+        foreach (array_slice($ids, 0, 500) as $id) {
+            $row = Task::find($id);
+            $project = $row ? Project::find((int) $row['project_id']) : null;
+            if (!$row || !$project || !Project::isVisibleTo($project, (int) Auth::id(), Auth::hasRole(['admin']))
+                || empty($row['is_closed']) || !empty($row['is_archived']) || !Task::isManagerial($row)) {
+                $skipped++;
+                continue;
+            }
+            Task::setArchived($id, true, (int) Auth::id());
+            $done++;
+        }
+        $msg = 'В архів відправлено задач: ' . $done . ($skipped ? '; пропущено (не закриті, не від керівництва чи вже в архіві): ' . $skipped : '');
+        header('Location: ' . $back . '?' . ($done ? 'bulk_ok=' : 'bulk_err=') . urlencode($msg));
+        exit;
+    }
+
     /** Закриту задачу від керівництва — в архів / назад з архіву (Керівник підрозділу, адміністратор). */
     public function archive(array $params): void
     {

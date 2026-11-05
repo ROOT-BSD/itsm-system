@@ -17,8 +17,21 @@ class Auth
         if (session_status() === PHP_SESSION_NONE) {
             // Cookie сесії: недоступна скриптам сторінки (HttpOnly), не надсилається з чужих сайтів (SameSite) і йде лише по HTTPS,
             // якщо вхід виконано через HTTPS (прямо чи через проксі із заголовком X-Forwarded-Proto).
+            // Тривалість: SESSION_LIFETIME_MINUTES у .env (за замовчуванням 2 год) — і для cookie, і для збірки сміття PHP.
+            // Власна тека storage/sessions: системний cron (Debian/Ubuntu) чистить стандартну теку за php.ini-значенням (24 хв).
+            $life = (int) Config::get('session.lifetime_minutes', 120) * 60;
+            $dir = __DIR__ . '/../../storage/sessions';
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0700, true);
+            }
+            if (is_dir($dir) && is_writable($dir)) {
+                session_save_path($dir);
+                ini_set('session.gc_probability', '1');
+                ini_set('session.gc_divisor', '100');
+            }
+            ini_set('session.gc_maxlifetime', (string) $life);
             session_set_cookie_params([
-                'lifetime' => 0,
+                'lifetime' => $life,
                 'path' => '/',
                 'secure' => Request::isHttps(),
                 'httponly' => true,

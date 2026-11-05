@@ -30,6 +30,11 @@ if [ -d "${SCRIPT_DIR}/storage/logs" ]; then
     chmod -R u+rwX,g+rwX "${SCRIPT_DIR}/storage/logs" 2>/dev/null && ok "storage/logs: доступна для запису веб-серверу"
 fi
 
+# storage/sessions: файли сесій читає й пише лише веб-сервер
+if [ -d "${SCRIPT_DIR}/storage/sessions" ]; then
+    chmod 700 "${SCRIPT_DIR}/storage/sessions" 2>/dev/null && ok "storage/sessions: доступна лише веб-серверу"
+fi
+
 # storage/wiki: текст вікі пише веб-сервер
 if [ -d "${SCRIPT_DIR}/storage/wiki" ]; then
     find "${SCRIPT_DIR}/storage/wiki" -type d -exec chmod 770 {} \; 2>/dev/null

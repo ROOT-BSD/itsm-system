@@ -20,6 +20,12 @@ final class Access
         return in_array($role, ['it_manager', 'support_operator'], true);
     }
 
+    /** Запити на зміни (Change): створювати й бачити розділ — персонал та керівники (заявники й спостерігачі — ні). */
+    public static function canUseChanges(?string $role): bool
+    {
+        return in_array($role, ['admin', 'it_manager', 'sysadmin', 'support_operator', 'dept_head'], true);
+    }
+
     /** Призначати й знімати оператора тікета. */
     public static function canAssignTicketOperator(?string $role): bool
     {

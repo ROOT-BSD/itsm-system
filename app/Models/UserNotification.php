@@ -20,6 +20,7 @@ class UserNotification
         'projects' => 'Проєкти — призначення відповідальним, доступ до проєкту',
         'forum' => 'Форум — нові теми й відповіді',
         'reminders' => 'Нагадування про терміни задач',
+        'changes' => 'Зміни (Change) — погодження, рішення, виконання',
     ];
 
     public static function prefsReady(): bool

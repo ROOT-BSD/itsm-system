@@ -10,13 +10,29 @@
     </div>
 </div>
 
+<?php if (!empty($_GET['bulk_ok'])): ?><div class="alert alert-success py-2"><?= \App\Core\View::e((string) $_GET['bulk_ok']) ?></div><?php endif; ?>
+<?php if (!empty($_GET['bulk_err'])): ?><div class="alert alert-danger py-2"><?= \App\Core\View::e((string) $_GET['bulk_err']) ?></div><?php endif; ?>
+<?php
+// Закриті задачі від керівництва в цьому списку (їх бачать лише ті, хто може архівувати) — масове відправлення в «Архів».
+$bulk = \App\Models\Task::archiveReady() && \App\Models\Task::canArchive(\App\Core\Auth::role())
+    && (bool) array_filter($tasks ?? [], static fn($x) => !empty($x['is_closed']));
+$cols = 8 + ($bulk ? 1 : 0);
+?>
+<?php if ($bulk): ?>
+<form method="post" action="/tasks/archive-bulk" id="bulk-archive-form" data-confirm="Відправити вибрані закриті задачі в архів?">
+    <?= \App\Core\Csrf::field() ?>
+    <div class="mb-2 d-flex align-items-center gap-2">
+        <button type="submit" class="btn btn-sm btn-outline-secondary" id="bulk-archive-btn" disabled>📦 В архів вибрані (<span id="bulk-archive-count">0</span>)</button>
+        <span class="text-muted small">Позначте закриті задачі (закреслені) й відправте їх в архів одним рухом.</span>
+    </div>
+<?php endif; ?>
 <table class="table table-bordered table-sm table-compact-rows bg-white align-middle">
     <thead>
-        <tr><th>#</th><th>Назва</th><th>Проєкт</th><th>Виконавець</th><th>Пріоритет</th><th>Статус</th><th>Термін</th><th>Створено</th></tr>
+        <tr><?php if ($bulk): ?><th style="width:2rem"><input type="checkbox" class="form-check-input" id="bulk-archive-all" title="Вибрати всі закриті"></th><?php endif; ?><th>#</th><th>Назва</th><th>Проєкт</th><th>Виконавець</th><th>Пріоритет</th><th>Статус</th><th>Термін</th><th>Створено</th></tr>
     </thead>
     <tbody>
     <?php if (empty($tasks)): ?>
-        <tr><td colspan="8" class="text-center text-muted">Відкритих задач немає</td></tr>
+        <tr><td colspan="<?= $cols ?>" class="text-center text-muted">Відкритих задач немає</td></tr>
     <?php else:
         // Групи за проєктом: кожен проєкт — свій стійкий пастельний колір (як на дашборді).
         $prevProject = null;
@@ -25,10 +41,11 @@
             $hue = ($pid * 47) % 360;
             if ($prevProject !== $pid): $prevProject = $pid; ?>
         <tr style="--bs-table-bg: hsl(<?= $hue ?>, 45%, 86%);">
-            <td colspan="8" class="fw-semibold"><a href="/projects/<?= $pid ?>" class="text-decoration-none text-body"><?= \App\Core\View::e($t['project_name']) ?></a></td>
+            <td colspan="<?= $cols ?>" class="fw-semibold"><a href="/projects/<?= $pid ?>" class="text-decoration-none text-body"><?= \App\Core\View::e($t['project_name']) ?></a></td>
         </tr>
         <?php endif; ?>
         <tr class="<?= !empty($t['is_closed']) ? 'task-struck' : '' ?>" style="--bs-table-bg: hsl(<?= $hue ?>, 55%, 94%);">
+            <?php if ($bulk): ?><td><?php if (!empty($t['is_closed'])): ?><input type="checkbox" class="form-check-input bulk-archive-item" name="ids[]" value="<?= (int)$t['id'] ?>"><?php endif; ?></td><?php endif; ?>
             <td><a href="/tasks/<?= (int)$t['id'] ?>">#<?= (int)$t['id'] ?></a></td>
             <td><?php if (!empty($t['parent_task_id'])): ?><span class="text-muted" title="Підзадача задачі #<?= (int)$t['parent_task_id'] ?>">↳ </span><?php endif; ?><?= \App\Core\View::e($t['title']) ?>
                 <?= \App\Core\View::progress($t) ?>
@@ -51,3 +68,4 @@
     <?php endforeach; endif; ?>
     </tbody>
 </table>
+<?php if ($bulk): ?></form><script src="/assets/js/bulk-archive.js"></script><?php endif; ?>

@@ -3,7 +3,7 @@
 namespace App\Core;
 
 /**
- * Підлеглі «Керівника відділу» (dept_head): users.manager_id — прямий керівник співробітника. Підлеглі охоплюють
+ * Підлеглі «Керівника відділу» (dept_head): user_managers — керівники співробітника (їх може бути кілька; міграція 070; users.manager_id — основний, дублюється для сумісності). Підлеглі охоплюють
  * усю гілку вниз (підлеглі підлеглих, до MAX_DEPTH рівнів). Керівник відділу бачить і веде проєкти, задачі та тікети,
  * де його підлеглий — автор, відповідальний, учасник, виконавець чи заявник/оператор. Хто не Керівник відділу
  * (або колонки manager_id ще немає — міграція 063), підлеглих не має, і всі функції нічого не додають.
@@ -28,6 +28,69 @@ final class Team
     public static function reset(): void
     {
         self::$cache = [];
+        self::$links = null;
+    }
+
+    private static ?bool $linksReady = null;
+    /** @var array<int, int[]>|null user_id => [manager_id…] (усі активні зв'язки) */
+    private static ?array $links = null;
+
+    /** Чи є таблиця багатьох керівників (міграція 070); без неї діє один керівник users.manager_id. */
+    public static function linksReady(): bool
+    {
+        return self::$linksReady ??= Database::tableExists('user_managers');
+    }
+
+    /** Усі зв'язки «підлеглий → керівники»: [user_id => [manager_id…]]. */
+    private static function allLinks(): array
+    {
+        if (self::$links === null) {
+            $pairs = self::linksReady()
+                ? Database::connection()->query('SELECT user_id, manager_id FROM user_managers')->fetchAll(\PDO::FETCH_NUM)
+                : (self::ready() ? Database::connection()->query('SELECT id, manager_id FROM users WHERE manager_id IS NOT NULL')->fetchAll(\PDO::FETCH_NUM) : []);
+            self::$links = [];
+            foreach ($pairs as [$u, $m]) {
+                self::$links[(int) $u][] = (int) $m;
+            }
+        }
+        return self::$links;
+    }
+
+    /**
+     * Id усіх керівників користувача (прямих).
+     * @return int[]
+     */
+    public static function managerIds(int $userId): array
+    {
+        return self::allLinks()[$userId] ?? [];
+    }
+
+    /** Додає зв'язок «керівник → підлеглий» і підтримує основного керівника users.manager_id. */
+    public static function link(int $userId, int $managerId): void
+    {
+        $db = Database::connection();
+        if (self::linksReady()) {
+            $db->prepare('INSERT IGNORE INTO user_managers (user_id, manager_id) VALUES (:u, :m)')->execute(['u' => $userId, 'm' => $managerId]);
+        }
+        $db->prepare('UPDATE users SET manager_id = :m WHERE id = :u AND manager_id IS NULL')->execute(['u' => $userId, 'm' => $managerId]);
+        self::reset();
+    }
+
+    /** Прибирає зв'язок; якщо це був основний керівник — основним стає інший (або NULL). */
+    public static function unlink(int $userId, int $managerId): void
+    {
+        $db = Database::connection();
+        if (self::linksReady()) {
+            $db->prepare('DELETE FROM user_managers WHERE user_id = :u AND manager_id = :m')->execute(['u' => $userId, 'm' => $managerId]);
+            $left = $db->prepare('SELECT MIN(manager_id) FROM user_managers WHERE user_id = :u');
+            $left->execute(['u' => $userId]);
+            $next = $left->fetchColumn();
+            $db->prepare('UPDATE users SET manager_id = :m WHERE id = :u AND (manager_id = :old OR manager_id IS NULL)')
+               ->execute(['m' => $next !== false && $next !== null ? (int) $next : null, 'u' => $userId, 'old' => $managerId]);
+        } else {
+            $db->prepare('UPDATE users SET manager_id = NULL WHERE id = :u AND manager_id = :m')->execute(['u' => $userId, 'm' => $managerId]);
+        }
+        self::reset();
     }
 
     /** Чи користувач — активний Керівник відділу. */
@@ -55,18 +118,21 @@ final class Team
                 $seen = [$headId => true];
                 $level = [$headId];
                 for ($d = 0; $d < self::MAX_DEPTH && $level; $d++) {
-                    $in = implode(',', array_map('intval', $level));
                     $next = [];
-                    foreach (Database::connection()->query("SELECT id FROM users WHERE manager_id IN ({$in}) AND is_active = 1")->fetchAll(\PDO::FETCH_COLUMN) as $id) {
-                        $id = (int) $id;
-                        if (!isset($seen[$id])) {
-                            $seen[$id] = true;
-                            $ids[] = $id;
-                            $next[] = $id;
+                    foreach (self::allLinks() as $uid => $mgrs) {
+                        if (isset($seen[$uid]) || !array_intersect($mgrs, $level)) {
+                            continue;
                         }
+                        $seen[$uid] = true;
+                        $ids[] = $uid;
+                        $next[] = $uid;
                     }
                     $level = $next;
                 }
+            }
+            if ($ids) {   // лише активні
+                $in = implode(',', array_map('intval', $ids));
+                $ids = array_map('intval', Database::connection()->query("SELECT id FROM users WHERE id IN ({$in}) AND is_active = 1")->fetchAll(\PDO::FETCH_COLUMN));
             }
             self::$cache[$headId] = $ids;
         }
@@ -95,28 +161,46 @@ final class Team
         return ["{$idExpr} IN (" . implode(',', array_map('intval', $ids)) . ')', []];
     }
 
-    /** Найближчий вгору по підпорядкуванню активний Керівник відділу для користувача (NULL — немає). */
+    /** Найближчий вгору по підпорядкуванню активний Керівник відділу для користувача (NULL — немає); при кількох — з меншим id. */
     public static function nearestHead(int $userId): ?int
     {
+        $heads = self::nearestHeads($userId);
+        return $heads ? $heads[0] : null;
+    }
+
+    /**
+     * Найближчі вгору активні Керівники відділів по всіх гілках підпорядкування (за рівнями: ближчий рівень — раніше).
+     * @return int[]
+     */
+    public static function nearestHeads(int $userId): array
+    {
         if (!self::ready() || $userId <= 0) {
-            return null;
+            return [];
         }
-        $stmt = Database::connection()->prepare(
-            'SELECT u.manager_id, m.is_active, r.code FROM users u LEFT JOIN users m ON m.id = u.manager_id LEFT JOIN roles r ON r.id = m.role_id WHERE u.id = :id'
-        );
-        $cur = $userId;
-        for ($d = 0; $d < self::MAX_DEPTH; $d++) {
-            $stmt->execute(['id' => $cur]);
-            $row = $stmt->fetch();
-            if (!$row || empty($row['manager_id'])) {
-                return null;
+        $seen = [$userId => true];
+        $level = [$userId];
+        for ($d = 0; $d < self::MAX_DEPTH && $level; $d++) {
+            $cand = [];
+            foreach ($level as $uid) {
+                foreach (self::managerIds($uid) as $m) {
+                    if (!isset($seen[$m])) {
+                        $seen[$m] = true;
+                        $cand[] = $m;
+                    }
+                }
             }
-            $cur = (int) $row['manager_id'];
-            if ($row['code'] === 'dept_head' && (int) $row['is_active'] === 1) {
-                return $cur;
+            if ($cand) {
+                $in = implode(',', array_map('intval', $cand));
+                $heads = array_map('intval', Database::connection()->query(
+                    "SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id IN ({$in}) AND u.is_active = 1 AND r.code = 'dept_head' ORDER BY u.id"
+                )->fetchAll(\PDO::FETCH_COLUMN));
+                if ($heads) {
+                    return $heads;
+                }
             }
+            $level = $cand;
         }
-        return null;
+        return [];
     }
 
     /** Чи є $userId підлеглим Керівника відділу $headId. */

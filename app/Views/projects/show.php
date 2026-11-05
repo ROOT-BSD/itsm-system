@@ -207,13 +207,28 @@ $eMember = static fn($v) => \App\Core\View::e($v);
 </details>
 <?php endif; ?>
 
+<?php if (!empty($_GET['bulk_ok'])): ?><div class="alert alert-success py-2"><?= \App\Core\View::e((string) $_GET['bulk_ok']) ?></div><?php endif; ?>
+<?php if (!empty($_GET['bulk_err'])): ?><div class="alert alert-danger py-2"><?= \App\Core\View::e((string) $_GET['bulk_err']) ?></div><?php endif; ?>
+<?php
+$bulk = \App\Models\Task::archiveReady() && \App\Models\Task::canArchive(\App\Core\Auth::role())
+    && (bool) array_filter($tasks ?? [], static fn($x) => !empty($x['is_closed']) && ($x['status_code'] ?? '') !== 'resolved' && empty($x['is_archived']));
+?>
+<?php if ($bulk): ?>
+<form method="post" action="/tasks/archive-bulk" id="bulk-archive-form" data-confirm="Відправити вибрані закриті задачі в архів?">
+    <?= \App\Core\Csrf::field() ?>
+    <input type="hidden" name="back" value="/projects/<?= (int)$project['id'] ?>">
+    <div class="mb-2 d-flex align-items-center gap-2">
+        <button type="submit" class="btn btn-sm btn-outline-secondary" id="bulk-archive-btn" disabled>📦 В архів вибрані (<span id="bulk-archive-count">0</span>)</button>
+        <span class="text-muted small">Закриті задачі від керівництва можна відправити в архів одним рухом.</span>
+    </div>
+<?php endif; ?>
 <table class="table table-bordered bg-white">
     <thead>
-        <tr><th>#</th><th>Назва</th><th>Тип</th><th>Статус</th><th>Пріоритет</th><th>Виконавець</th><th>Термін</th></tr>
+        <tr><?php if ($bulk): ?><th style="width:2rem"><input type="checkbox" class="form-check-input" id="bulk-archive-all" title="Вибрати всі закриті"></th><?php endif; ?><th>#</th><th>Назва</th><th>Тип</th><th>Статус</th><th>Пріоритет</th><th>Виконавець</th><th>Термін</th></tr>
     </thead>
     <tbody>
     <?php if (empty($tasks)): ?>
-        <tr><td colspan="7" class="text-center text-muted">Задач ще немає</td></tr>
+        <tr><td colspan="<?= $bulk ? 8 : 7 ?>" class="text-center text-muted">Задач ще немає</td></tr>
     <?php else:
         // Відкриті — зверху, за терміном (найближчі першими, без терміну — в кінці); закриті — внизу.
         $sortedTasks = $tasks;
@@ -221,6 +236,7 @@ $eMember = static fn($v) => \App\Core\View::e($v);
         usort($sortedTasks, static fn($a, $b) => [(int)$a['is_closed'], $a['due_date'] === null, (string)$a['due_date'], (int)$a['id']] <=> [(int)$b['is_closed'], $b['due_date'] === null, (string)$b['due_date'], (int)$b['id']]);
         foreach ($sortedTasks as $t): ?>
         <tr class="<?= empty($t['is_closed']) ? \App\Core\View::urgencyClass($t['due_date'] ?? null) : 'task-struck' ?>">
+            <?php if ($bulk): ?><td><?php if (!empty($t['is_closed'])): ?><input type="checkbox" class="form-check-input bulk-archive-item" name="ids[]" value="<?= (int)$t['id'] ?>"><?php endif; ?></td><?php endif; ?>
             <td><a href="/tasks/<?= (int)$t['id'] ?>">#<?= (int)$t['id'] ?></a></td>
             <td><?php if (!empty($t['parent_task_id'])): ?><span class="text-muted" title="Підзадача задачі #<?= (int)$t['parent_task_id'] ?>">↳ </span><?php endif; ?><?= \App\Core\View::e($t['title']) ?>
                 <?= \App\Core\View::progress($t) ?></td>
@@ -241,6 +257,7 @@ $eMember = static fn($v) => \App\Core\View::e($v);
     <?php endforeach; endif; ?>
     </tbody>
 </table>
+<?php if ($bulk): ?></form><script src="/assets/js/bulk-archive.js"></script><?php endif; ?>
 
 <?php if (!empty($linkedTickets)): ?>
 <h5 class="mt-4">Пов'язані тікети</h5>

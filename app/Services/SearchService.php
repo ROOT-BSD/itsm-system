@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Core\Access;
 use App\Core\Database;
+use App\Core\FullText;
 use App\Core\Markdown;
 use App\Models\Forum;
 use App\Models\LibraryDocument;
@@ -32,7 +33,10 @@ class SearchService
         $sections = [];
         foreach (['projects' => 'Проєкти', 'tasks' => 'Задачі', 'tickets' => 'Тікети', 'wiki' => 'Вікі', 'library' => 'Документи', 'forum' => 'Форум'] as $key => $title) {
             try {
-                $section = self::$key($query, $userId, $role);
+                $section = self::$key($query, $userId, $role, true); // спершу повнотекстовий пошук із ранжуванням
+                if ($section['total'] === 0 && in_array($key, ['projects', 'tasks', 'tickets'], true) && FullText::boolean($query) !== null) {
+                    $section = self::$key($query, $userId, $role, false); // підрядок усередині слова — звичайний LIKE
+                }
             } catch (\Throwable) {
                 continue; // таблиці ще немає (не виконано update.sh) чи збій розділу — решта пошуку працює
             }
@@ -43,11 +47,13 @@ class SearchService
 
     // ---------- розділи ----------
 
-    private static function projects(string $q, int $userId, ?string $role): array
+    private static function projects(string $q, int $userId, ?string $role, bool $useFt = false): array
     {
         $like = self::like($q);
-        $where = '(p.name LIKE :l1 OR p.description LIKE :l2' . (($id = self::idOf($q)) ? ' OR p.id = :pid' : '') . ')';
-        $params = ['l1' => $like, 'l2' => $like] + ($id ? ['pid' => $id] : []);
+        $ft = $useFt && FullText::ready('projects', 'ft_name_description') ? FullText::boolean($q) : null;
+        $where = '(' . ($ft !== null ? 'MATCH(p.name, p.description) AGAINST (:f1 IN BOOLEAN MODE)' : 'p.name LIKE :l1 OR p.description LIKE :l2')
+            . (($id = self::idOf($q)) ? ' OR p.id = :pid' : '') . ')';
+        $params = ($ft !== null ? ['f1' => $ft] : ['l1' => $like, 'l2' => $like]) + ($id ? ['pid' => $id] : []);
         if (!Access::isAdmin($role)) {
             [$acc, $accParams] = Project::accessCondition('p', 'sa', $userId);
             $where .= ' AND ' . $acc;
@@ -58,27 +64,30 @@ class SearchService
             "SELECT p.id, p.name, p.status, p.description, ru.full_name AS responsible
              FROM projects p LEFT JOIN users ru ON ru.id = p.responsible_user_id
              WHERE {$where}
-             ORDER BY (p.name LIKE :ord) DESC, p.updated_at DESC LIMIT " . self::PER_SECTION
+             ORDER BY (p.name LIKE :ord) DESC" . ($ft !== null ? ', MATCH(p.name, p.description) AGAINST (:f2 IN BOOLEAN MODE) DESC' : '') . ", p.updated_at DESC LIMIT " . self::PER_SECTION
         );
-        $stmt->execute($params + ['ord' => $like]);
+        $stmt->execute($params + ['ord' => $like] + ($ft !== null ? ['f2' => $ft] : []));
         $items = [];
         foreach ($stmt->fetchAll() as $r) {
             $items[] = [
-                'url' => '/projects/' . (int) $r['id'],
+                'url' => '/projects/' . (int) $r['id'] . self::hl($q),
                 'title' => self::mark((string) $r['name'], $q),
                 'meta' => 'Проєкт #' . (int) $r['id'] . ($r['status'] !== 'active' ? ' · ' . self::projectStatus((string) $r['status']) : '') . ($r['responsible'] ? ' · відповідальний: ' . $r['responsible'] : ''),
-                'snippet' => stripos((string) $r['name'], $q) === false ? self::snippet((string) $r['description'], $q) : '',
+                'snippet' => !self::has((string) $r['name'], $q) ? self::snippet((string) $r['description'], $q) : '',
             ];
         }
         return self::result($total, $items, null);
     }
 
-    private static function tasks(string $q, int $userId, ?string $role): array
+    private static function tasks(string $q, int $userId, ?string $role, bool $useFt = false): array
     {
         $like = self::like($q);
-        $where = '(t.title LIKE :l1 OR t.description LIKE :l2 OR EXISTS (SELECT 1 FROM comments c WHERE c.task_id = t.id AND c.body LIKE :l3)'
+        $ft = $useFt && FullText::ready('tasks', 'ft_title_description') && FullText::ready('comments', 'ft_body') ? FullText::boolean($q) : null;
+        $where = ($ft !== null
+            ? '(MATCH(t.title, t.description) AGAINST (:f1 IN BOOLEAN MODE) OR EXISTS (SELECT 1 FROM comments c WHERE c.task_id = t.id AND MATCH(c.body) AGAINST (:f2 IN BOOLEAN MODE))'
+            : '(t.title LIKE :l1 OR t.description LIKE :l2 OR EXISTS (SELECT 1 FROM comments c WHERE c.task_id = t.id AND c.body LIKE :l3)')
             . (($id = self::idOf($q)) ? ' OR t.id = :tid' : '') . ')';
-        $params = ['l1' => $like, 'l2' => $like, 'l3' => $like] + ($id ? ['tid' => $id] : []);
+        $params = ($ft !== null ? ['f1' => $ft, 'f2' => $ft] : ['l1' => $like, 'l2' => $like, 'l3' => $like]) + ($id ? ['tid' => $id] : []);
         if (!Access::isAdmin($role)) {
             [$acc, $accParams] = Project::accessCondition('p', 'sa', $userId);
             $where .= ' AND ' . $acc;
@@ -88,21 +97,21 @@ class SearchService
         $total = self::count("SELECT COUNT(*) {$from} WHERE {$where}", $params);
         $stmt = Database::connection()->prepare(
             "SELECT t.id, t.title, t.description, p.name AS project_name, ts.name AS status_name, ts.is_closed,
-                    (SELECT c2.body FROM comments c2 WHERE c2.task_id = t.id AND c2.body LIKE :lc ORDER BY c2.id DESC LIMIT 1) AS comment_hit
+                    (SELECT c2.body FROM comments c2 WHERE c2.task_id = t.id AND " . ($ft !== null ? 'MATCH(c2.body) AGAINST (:f3 IN BOOLEAN MODE)' : 'c2.body LIKE :lc') . " ORDER BY c2.id DESC LIMIT 1) AS comment_hit
              {$from} WHERE {$where}
-             ORDER BY (t.title LIKE :ord) DESC, ts.is_closed ASC, t.updated_at DESC LIMIT " . self::PER_SECTION
+             ORDER BY (t.title LIKE :ord) DESC" . ($ft !== null ? ', MATCH(t.title, t.description) AGAINST (:f4 IN BOOLEAN MODE) DESC' : '') . ", ts.is_closed ASC, t.updated_at DESC LIMIT " . self::PER_SECTION
         );
-        $stmt->execute($params + ['ord' => $like, 'lc' => $like]);
+        $stmt->execute($params + ['ord' => $like] + ($ft !== null ? ['f3' => $ft, 'f4' => $ft] : ['lc' => $like]));
         $items = [];
         foreach ($stmt->fetchAll() as $r) {
             $snippet = '';
-            if (stripos((string) $r['title'], $q) === false) {
-                $snippet = stripos((string) $r['description'], $q) !== false
+            if (!self::has((string) $r['title'], $q)) {
+                $snippet = self::has((string) $r['description'], $q)
                     ? self::snippet((string) $r['description'], $q)
                     : ($r['comment_hit'] !== null ? 'у коментарі: ' . self::snippet((string) $r['comment_hit'], $q) : '');
             }
             $items[] = [
-                'url' => '/tasks/' . (int) $r['id'],
+                'url' => '/tasks/' . (int) $r['id'] . self::hl($q),
                 'title' => self::mark((string) $r['title'], $q),
                 'meta' => 'Задача #' . (int) $r['id'] . ' · ' . $r['project_name'] . ' · ' . $r['status_name'] . ((int) $r['is_closed'] ? ' (закрита)' : ''),
                 'snippet' => $snippet,
@@ -111,12 +120,15 @@ class SearchService
         return self::result($total, $items, null);
     }
 
-    private static function tickets(string $q, int $userId, ?string $role): array
+    private static function tickets(string $q, int $userId, ?string $role, bool $useFt = false): array
     {
         $like = self::like($q);
-        $where = '(t.subject LIKE :l1 OR t.description LIKE :l2 OR t.requester_name LIKE :l3 OR EXISTS (SELECT 1 FROM ticket_comments c WHERE c.ticket_id = t.id AND c.body LIKE :l4)'
+        $ft = $useFt && FullText::ready('tickets', 'ft_subject_description') && FullText::ready('ticket_comments', 'ft_body') ? FullText::boolean($q) : null;
+        $where = ($ft !== null
+            ? '(MATCH(t.subject, t.description) AGAINST (:f1 IN BOOLEAN MODE) OR t.requester_name LIKE :l3 OR EXISTS (SELECT 1 FROM ticket_comments c WHERE c.ticket_id = t.id AND MATCH(c.body) AGAINST (:f2 IN BOOLEAN MODE))'
+            : '(t.subject LIKE :l1 OR t.description LIKE :l2 OR t.requester_name LIKE :l3 OR EXISTS (SELECT 1 FROM ticket_comments c WHERE c.ticket_id = t.id AND c.body LIKE :l4)')
             . (($id = self::idOf($q)) ? ' OR t.id = :tid' : '') . ')';
-        $params = ['l1' => $like, 'l2' => $like, 'l3' => $like, 'l4' => $like] + ($id ? ['tid' => $id] : []);
+        $params = ($ft !== null ? ['f1' => $ft, 'f2' => $ft, 'l3' => $like] : ['l1' => $like, 'l2' => $like, 'l3' => $like, 'l4' => $like]) + ($id ? ['tid' => $id] : []);
         if (!Access::isAdmin($role)) {
             [$vis, $visParams] = Ticket::visibilityCondition('t', $userId, Access::canSeeUnassignedTickets($role));
             $where .= ' AND ' . $vis;
@@ -126,21 +138,21 @@ class SearchService
         $total = self::count("SELECT COUNT(*) {$from} WHERE {$where}", $params);
         $stmt = Database::connection()->prepare(
             "SELECT t.id, t.subject, t.description, t.status, t.requester_name, qu.name AS queue_name,
-                    (SELECT c2.body FROM ticket_comments c2 WHERE c2.ticket_id = t.id AND c2.body LIKE :lc ORDER BY c2.id DESC LIMIT 1) AS comment_hit
+                    (SELECT c2.body FROM ticket_comments c2 WHERE c2.ticket_id = t.id AND " . ($ft !== null ? 'MATCH(c2.body) AGAINST (:f3 IN BOOLEAN MODE)' : 'c2.body LIKE :lc') . " ORDER BY c2.id DESC LIMIT 1) AS comment_hit
              {$from} WHERE {$where}
-             ORDER BY (t.subject LIKE :ord) DESC, (t.status = 'closed') ASC, t.created_at DESC LIMIT " . self::PER_SECTION
+             ORDER BY (t.subject LIKE :ord) DESC" . ($ft !== null ? ', MATCH(t.subject, t.description) AGAINST (:f4 IN BOOLEAN MODE) DESC' : '') . ", (t.status = 'closed') ASC, t.created_at DESC LIMIT " . self::PER_SECTION
         );
-        $stmt->execute($params + ['ord' => $like, 'lc' => $like]);
+        $stmt->execute($params + ['ord' => $like] + ($ft !== null ? ['f3' => $ft, 'f4' => $ft] : ['lc' => $like]));
         $items = [];
         foreach ($stmt->fetchAll() as $r) {
             $snippet = '';
-            if (stripos((string) $r['subject'], $q) === false) {
-                $snippet = stripos((string) $r['description'], $q) !== false
+            if (!self::has((string) $r['subject'], $q)) {
+                $snippet = self::has((string) $r['description'], $q)
                     ? self::snippet((string) $r['description'], $q)
                     : ($r['comment_hit'] !== null ? 'у коментарі: ' . self::snippet((string) $r['comment_hit'], $q) : '');
             }
             $items[] = [
-                'url' => '/tickets/' . (int) $r['id'],
+                'url' => '/tickets/' . (int) $r['id'] . self::hl($q),
                 'title' => self::mark((string) $r['subject'], $q),
                 'meta' => 'Тікет #' . (int) $r['id'] . ' · ' . $r['queue_name'] . ' · ' . \App\Models\Ticket::statusLabel((string) $r['status']) . ' · заявник: ' . $r['requester_name'],
                 'snippet' => $snippet,
@@ -149,13 +161,13 @@ class SearchService
         return self::result($total, $items, null);
     }
 
-    private static function wiki(string $q, int $userId, ?string $role): array
+    private static function wiki(string $q, int $userId, ?string $role, bool $useFt = false): array
     {
         $rows = WikiPage::search($q, $role, self::PER_SECTION + 1);
         $items = [];
         foreach (array_slice($rows, 0, self::PER_SECTION) as $r) {
             $items[] = [
-                'url' => '/wiki/' . rawurlencode((string) $r['slug']),
+                'url' => '/wiki/' . rawurlencode((string) $r['slug']) . self::hl($q),
                 'title' => self::mark((string) $r['title'], $q),
                 'meta' => 'Вікі',
                 'snippet' => !empty($r['in_title']) ? '' : self::snippet((string) ($r['content'] ?? ''), $q),
@@ -164,28 +176,28 @@ class SearchService
         return self::result(count($rows), $items, '/wiki?q=' . rawurlencode($q), count($rows) > self::PER_SECTION);
     }
 
-    private static function library(string $q, int $userId, ?string $role): array
+    private static function library(string $q, int $userId, ?string $role, bool $useFt = false): array
     {
         $res = LibraryDocument::search($role, $userId, null, $q, 1, self::PER_SECTION, '');
         $items = [];
         foreach ($res['rows'] as $r) {
             $items[] = [
-                'url' => '/library/' . (int) $r['id'],
+                'url' => '/library/' . (int) $r['id'] . self::hl($q),
                 'title' => self::mark((string) $r['title'], $q),
                 'meta' => 'Документ' . ($r['category_name'] ? ' · ' . $r['category_name'] : '') . ($r['original_name'] ? ' · ' . $r['original_name'] : ''),
-                'snippet' => stripos((string) $r['title'], $q) === false ? self::snippet((string) ($r['description'] ?? ''), $q) : '',
+                'snippet' => self::librarySnippet($r, $q),
             ];
         }
         return self::result((int) $res['total'], $items, '/library?q=' . rawurlencode($q));
     }
 
-    private static function forum(string $q, int $userId, ?string $role): array
+    private static function forum(string $q, int $userId, ?string $role, bool $useFt = false): array
     {
         $res = Forum::search($role, $q, 1, self::PER_SECTION, $userId);
         $items = [];
         foreach ($res['rows'] as $r) {
             $items[] = [
-                'url' => '/forum/topics/' . (int) $r['id'],
+                'url' => '/forum/topics/' . (int) $r['id'] . self::hl($q),
                 'title' => self::mark((string) $r['title'], $q),
                 'meta' => 'Форум · ' . $r['board_name'] . ' · відповідей: ' . (int) $r['reply_count'],
                 'snippet' => '',
@@ -225,30 +237,116 @@ class SearchService
         return ['archived' => 'в архіві', 'closed' => 'закритий'][$s] ?? $s;
     }
 
-    /** HTML із виділеним збігом; кожен шматок екранується окремо. */
+    /** Фрагмент для документа: з опису, а якщо там збігу немає — з тексту самого файлу («у файлі: …»). */
+    public static function librarySnippet(array $row, string $q): string
+    {
+        if (self::has((string) $row['title'], $q)) {
+            return '';
+        }
+        $fromDescription = self::snippet((string) ($row['description'] ?? ''), $q);
+        if ($fromDescription !== '' || empty($row['version_id'])) {
+            return $fromDescription;
+        }
+        $text = LibraryDocument::versionText((int) $row['version_id']);
+        $hits = $text === null ? [] : self::contentSnippets($text, $q, 1);
+        return $hits ? 'у файлі: ' . $hits[0] : '';
+    }
+
+    /**
+     * Фрагменти з тексту файлу навколо збігів (готовий безпечний HTML, до $max штук, не перекриваються).
+     * @return string[]
+     */
+    public static function contentSnippets(string $text, string $q, int $max = 5): array
+    {
+        $re = self::pattern($q);
+        if ($re === null || !preg_match_all($re, $text, $all, PREG_OFFSET_CAPTURE)) {
+            return [];
+        }
+        $esc = static fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+        $out = [];
+        $lastEnd = -1;
+        foreach ($all[0] as [$hit, $byte]) {
+            $pos = mb_strlen(substr($text, 0, $byte));
+            if ($pos < $lastEnd) {
+                continue;
+            }
+            $len = mb_strlen($hit);
+            $start = max(0, $pos - 70);
+            $end = $pos + $len + 100;
+            $before = preg_replace('/\s+/u', ' ', mb_substr($text, $start, $pos - $start));
+            $after = preg_replace('/\s+/u', ' ', mb_substr($text, $pos + $len, 100));
+            $out[] = ($start > 0 ? '…' : '') . $esc($before) . '<mark>' . $esc($hit) . '</mark>' . $esc($after) . ($end < mb_strlen($text) ? '…' : '');
+            $lastEnd = $end;
+            if (count($out) >= $max) {
+                break;
+            }
+        }
+        return $out;
+    }
+
+    /** Параметр для переходу до збігу на сторінці знайденого запису (див. public/assets/js/search-highlight.js). */
+    private static function hl(string $q): string
+    {
+        return '?hl=' . rawurlencode($q);
+    }
+
+    /** Регулярний вираз збігу: спершу вся фраза, потім окремі слова (від 2 символів). */
+    private static function pattern(string $q): ?string
+    {
+        $alts = [preg_quote($q, '/')];
+        foreach (FullText::terms($q) as $t) {
+            if (mb_strlen($t) >= 2 && mb_strtolower($t) !== mb_strtolower($q)) {
+                $alts[] = preg_quote($t, '/');
+            }
+        }
+        return $q === '' ? null : '/' . implode('|', $alts) . '/iu';
+    }
+
+    private static function has(string $text, string $q): bool
+    {
+        $re = self::pattern($q);
+        return $re !== null && preg_match($re, $text) === 1;
+    }
+
+    /** HTML із виділеним збігом (фраза чи окремі слова); кожен шматок екранується окремо. */
     private static function mark(string $text, string $q): string
     {
-        $pos = $q === '' ? false : mb_stripos($text, $q);
         $esc = static fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
-        if ($pos === false) {
+        $re = self::pattern($q);
+        $parts = $re === null ? false : preg_split($re === null ? '//' : $re, $text, -1, PREG_SPLIT_OFFSET_CAPTURE);
+        if (!$parts || count($parts) < 2) {
             return $esc($text);
         }
-        return $esc(mb_substr($text, 0, $pos)) . '<mark>' . $esc(mb_substr($text, $pos, mb_strlen($q))) . '</mark>' . $esc(mb_substr($text, $pos + mb_strlen($q)));
+        $out = '';
+        $pos = 0;
+        foreach ($parts as [$piece, $off]) {
+            if ($off > $pos) {
+                $out .= '<mark>' . $esc(substr($text, $pos, $off - $pos)) . '</mark>';
+            }
+            $out .= $esc($piece);
+            $pos = $off + strlen($piece);
+        }
+        if ($pos < strlen($text)) {
+            $out .= '<mark>' . $esc(substr($text, $pos)) . '</mark>';
+        }
+        return $out;
     }
 
     /** Фрагмент навколо першого збігу (готовий безпечний HTML); порожній, якщо збігу в тексті немає. */
     private static function snippet(string $text, string $q): string
     {
         $plain = trim(preg_replace('/\s+/u', ' ', Markdown::plainText($text)) ?? '');
-        $pos = mb_stripos($plain, $q);
-        if ($pos === false) {
+        $re = self::pattern($q);
+        if ($re === null || !preg_match($re, $plain, $m, PREG_OFFSET_CAPTURE)) {
             return '';
         }
+        $pos = mb_strlen(substr($plain, 0, $m[0][1]));
+        $len = mb_strlen($m[0][0]);
         $esc = static fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
         $start = max(0, $pos - 60);
         return ($start > 0 ? '…' : '') . $esc(mb_substr($plain, $start, $pos - $start))
-            . '<mark>' . $esc(mb_substr($plain, $pos, mb_strlen($q))) . '</mark>'
-            . $esc(mb_substr($plain, $pos + mb_strlen($q), 80))
-            . (mb_strlen($plain) > $pos + mb_strlen($q) + 80 ? '…' : '');
+            . '<mark>' . $esc(mb_substr($plain, $pos, $len)) . '</mark>'
+            . $esc(mb_substr($plain, $pos + $len, 80))
+            . (mb_strlen($plain) > $pos + $len + 80 ? '…' : '');
     }
 }

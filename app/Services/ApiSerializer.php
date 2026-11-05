@@ -74,6 +74,11 @@ final class ApiSerializer
             'due_date' => !empty($t['due_date']) ? substr((string) $t['due_date'], 0, 10) : null,
             'planned_start_date' => !empty($t['planned_start_date']) ? substr((string) $t['planned_start_date'], 0, 10) : null,
             'planned_due_date' => !empty($t['planned_due_date']) ? substr((string) $t['planned_due_date'], 0, 10) : null,
+            'estimated_hours' => isset($t['estimated_hours']) ? round((float) $t['estimated_hours'], 4) : null,
+            'estimated_minutes' => isset($t['estimated_hours']) ? \App\Core\TimeFormat::toMinutes((float) $t['estimated_hours']) : null,
+            'actual_hours' => isset($t['actual_hours']) ? round((float) $t['actual_hours'], 4) : null,
+            'actual_minutes' => isset($t['actual_hours']) ? \App\Core\TimeFormat::toMinutes((float) $t['actual_hours']) : null,
+            'actual_duration' => isset($t['actual_hours']) ? \App\Core\TimeFormat::hm((float) $t['actual_hours']) : null,
             'milestone' => !empty($t['milestone_id']) ? ['id' => (int) $t['milestone_id'], 'title' => $t['milestone_title'] ?? null] : null,
             'created_at' => self::iso($t['created_at'] ?? null),
             'updated_at' => self::iso($t['updated_at'] ?? null),
@@ -124,6 +129,8 @@ final class ApiSerializer
             'author' => self::ref(!empty($c['author_id']) ? (int) $c['author_id'] : null, $c['author_name'] ?? null, 'full_name'),
             'body' => \App\Core\View::withoutImageTokens($c['body'] ?? ''),
             'hours' => isset($c['hours']) ? round((float) $c['hours'], 4) : 0.0,
+            'minutes' => isset($c['hours']) ? \App\Core\TimeFormat::toMinutes((float) $c['hours']) : 0,
+            'duration' => isset($c['hours']) ? \App\Core\TimeFormat::hm((float) $c['hours']) : '0 хв',
             'created_at' => self::iso($c['created_at'] ?? null),
         ];
     }

@@ -92,6 +92,25 @@ class TaskRuleService
         return $id === false ? null : (int) $id;
     }
 
+    /**
+     * Чому правило НЕ може змінити виконавця цієї задачі (інакше воно обійшло б право закриття); NULL — можна.
+     * Задача від керівництва закривається лише перевіряючим: правило не повинно ні зробити її «звичайною» (виконавець = автор,
+     * і виконавець закрив би її сам), ні міняти перевіряючого в уже закритій задачі (змінилося б, хто може її повернути).
+     */
+    public static function assigneeProblem(array $task, int $newAssigneeId): ?string
+    {
+        $after = ['assignee_id' => $newAssigneeId] + $task;
+        $wasManagerial = Task::isManagerial($task);
+        if ($wasManagerial && !Task::isManagerial($after)) {
+            return 'задача від керівництва: правило не може зробити виконавцем її автора — закриття лишається за перевіряючим';
+        }
+        $closed = Task::statusIsClosed((int) $task['status_id']);
+        if ($closed && ($wasManagerial || Task::isManagerial($after)) && Task::reviewerId($task) !== Task::reviewerId($after)) {
+            return 'закрита задача від керівництва: правило не може змінити перевіряючого';
+        }
+        return null;
+    }
+
     /** Застосовує правила до задачі. Помилки правил роботу не ламають. */
     public static function apply(int $taskId, string $event, ?int $statusId = null): void
     {
@@ -113,6 +132,10 @@ class TaskRuleService
             }
             $db = \App\Core\Database::connection();
             $assigneeChanged = !empty($rule['action_assignee_id']) && (int) $rule['action_assignee_id'] !== (int) ($t['assignee_id'] ?? 0);
+            $skipped = null;
+            if ($assigneeChanged && ($skipped = self::assigneeProblem($t, (int) $rule['action_assignee_id'])) !== null) {
+                $assigneeChanged = false; // решту дій правила виконуємо, виконавця не чіпаємо
+            }
             if ($assigneeChanged) {
                 $db->prepare('UPDATE tasks SET assignee_id = :a WHERE id = :id')->execute(['a' => (int) $rule['action_assignee_id'], 'id' => $taskId]);
                 $t['assignee_id'] = (int) $rule['action_assignee_id'];
@@ -140,6 +163,7 @@ class TaskRuleService
                 'rule_id' => (int) $rule['id'], 'rule' => $rule['name'], 'event' => $event,
                 'assignee_id' => $assigneeChanged ? (int) $rule['action_assignee_id'] : null, 'priority' => $prioChanged ? $rule['action_priority'] : null,
                 'label_id' => $labelAdded ? (int) $rule['action_label_id'] : null, 'comment' => $commented,
+                'assignee_skipped' => $skipped,
             ]);
             $ids = self::systemUserIds($rule);
             if (!empty($rule['notify_system_assignee']) && !empty($t['assignee_id'])) {
@@ -149,7 +173,7 @@ class TaskRuleService
                 UserNotification::notify($uid, 'Задача №' . $taskId . ': спрацювало правило «' . $rule['name'] . '»',
                     'Задача №' . $taskId . ' — ' . (['status' => 'змінено статус', 'comment' => 'новий запис у журналі робіт', 'due' => 'змінено термін'][$event] ?? 'нова задача') . '. ' . $t['title'], '/tasks/' . $taskId);
             }
-            self::$lastNote = "правило «{$rule['name']}»";
+            self::$lastNote = "правило «{$rule['name']}»" . ($skipped !== null ? " (виконавця не змінено: {$skipped})" : '');
         } catch (\Throwable $e) {
             error_log('Правила задач: ' . $e->getMessage());
         }
