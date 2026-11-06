@@ -192,6 +192,31 @@ group('Утиліти: час, URL, DN, ліміти, Markdown', function () {
     check(str_contains($html, '<strong>x</strong>'), 'Markdown: жирний текст');
 });
 
+group('Архіви: перевірка вмісту zip / gz / tar.gz', function () {
+    $dir = sys_get_temp_dir() . '/selftest-arc-' . bin2hex(random_bytes(3));
+    mkdir($dir);
+    $mk = static function (string $name, string $bytes) use ($dir): string {
+        file_put_contents($dir . '/' . $name, $bytes);
+        return $dir . '/' . $name;
+    };
+    $L = \App\Services\LibraryService::class;
+    $emptyZip = "PK\x05\x06" . str_repeat("\0", 18);
+    check($L::contentProblem($mk('a.zip', $emptyZip), 'zip', 'a.zip') === null, 'порожній zip приймається');
+    check($L::contentProblem($mk('b.zip', '<?php echo 1;'), 'zip', 'b.zip') !== null, 'текст під назвою .zip відхиляється');
+    check($L::contentProblem($mk('c.zip', "PK\x03\x04" . str_repeat('x', 40)), 'zip', 'c.zip') !== null, 'обрізаний zip (без кінця каталогу) відхиляється');
+    $plain = gzencode('hello');
+    check($L::contentProblem($mk('d.gz', $plain), 'gz', 'd.gz') === null, 'звичайний .gz приймається');
+    check($L::contentProblem($mk('e.gz', 'hello'), 'gz', 'e.gz') !== null, 'не-gzip під назвою .gz відхиляється');
+    $tarBlock = str_pad('f.txt', 257, "\0") . 'ustar' . str_repeat("\0", 250);
+    check($L::contentProblem($mk('g.tar.gz', gzencode($tarBlock)), 'gz', 'g.tar.gz') === null, 'справжній tar.gz приймається');
+    check($L::contentProblem($mk('h.tgz', gzencode($tarBlock)), 'tgz', 'h.tgz') === null, 'справжній tgz приймається');
+    check($L::contentProblem($mk('i.tar.gz', $plain), 'gz', 'i.tar.gz') !== null, '.tar.gz без tar усередині відхиляється');
+    same('application/gzip', \App\Services\AttachmentService::ALLOWED['gz'] ?? $L::TYPES['gz'], 'MIME для gz');
+    check(\App\Services\AttachmentService::isArchiveMime('application/zip') && !\App\Services\AttachmentService::isArchiveMime('application/pdf'), 'isArchiveMime');
+    array_map('unlink', glob($dir . '/*') ?: []);
+    rmdir($dir);
+});
+
 group('Пошук: FullText, виділення, фрагменти', function () {
     same(['підключення', 'VPN'], \App\Core\FullText::terms('підключення, VPN!'), 'FullText::terms ділить за розділовими знаками');
     same('+підключ* +VPN*', \App\Core\FullText::boolean('підключ VPN'), 'FullText::boolean: префікси, усі слова обов\'язкові');

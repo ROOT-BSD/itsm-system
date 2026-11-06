@@ -27,6 +27,7 @@ $collapseEmpty = !empty($attachmentCollapseWhenEmpty) && empty($attachments); //
                     <?php
                     $isImage = str_starts_with($a['mime_type'], 'image/');
                     $isOffice = \App\Services\AttachmentService::isOfficeMime($a['mime_type']);
+                    $isArchive = \App\Services\AttachmentService::isArchiveMime($a['mime_type']);
                     $ext = strtoupper(pathinfo($a['original_name'], PATHINFO_EXTENSION));
                     $canPreview = $isOffice && \App\Services\LibraryPreview::supportsName((string) $a['original_name']);
                     ?>
@@ -37,11 +38,13 @@ $collapseEmpty = !empty($attachmentCollapseWhenEmpty) && empty($attachments); //
                             </a>
                         <?php elseif ($isOffice): ?>
                             <span class="attachment-icon badge bg-primary align-self-start"><?= \App\Core\View::e($ext) ?></span>
+                        <?php elseif ($isArchive): ?>
+                            <span class="attachment-icon badge bg-secondary align-self-start"><?= \App\Core\View::e($ext) ?></span>
                         <?php else: ?>
                             <span class="attachment-icon badge bg-danger align-self-start">PDF</span>
                         <?php endif; ?>
                         <div class="flex-grow-1">
-                            <a href="/attachments/<?= (int)$a['id'] ?><?= $isOffice ? '?download=1' : '' ?>"<?= $isOffice ? '' : ' target="_blank" rel="noopener"' . (($isImage || $a['mime_type'] === 'application/pdf') ? ' data-popup="' . ($isImage ? 'image' : 'pdf') . '" data-title="' . \App\Core\View::e($a['original_name']) . '"' : '') ?>><?= \App\Core\View::e($a['original_name']) ?></a>
+                            <a href="/attachments/<?= (int)$a['id'] ?><?= $isOffice || $isArchive ? '?download=1' : '' ?>"<?= $isOffice || $isArchive ? '' : ' target="_blank" rel="noopener"' . (($isImage || $a['mime_type'] === 'application/pdf') ? ' data-popup="' . ($isImage ? 'image' : 'pdf') . '" data-title="' . \App\Core\View::e($a['original_name']) . '"' : '') ?>><?= \App\Core\View::e($a['original_name']) ?></a>
                             <div class="small text-muted">
                                 <?= \App\Core\View::e(\App\Core\UploadLimits::human((int)$a['size_bytes'])) ?>
                                 · <?= \App\Core\View::e($a['uploader_name'] ?? (['portal' => 'заявник (портал)', 'email' => 'з електронного листа'][$a['source'] ?? 'web'] ?? 'користувача видалено')) ?>
@@ -68,11 +71,11 @@ $collapseEmpty = !empty($attachmentCollapseWhenEmpty) && empty($attachments); //
             <?= \App\Core\Csrf::field() ?>
             <div class="input-group">
                 <input type="file" name="files[]" class="form-control" multiple required
-                       accept="<?= $officeOn ? '.jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp' : '.jpg,.jpeg,.png,.gif,.webp,.pdf,image/jpeg,image/png,image/gif,image/webp,application/pdf' ?>">
+                       accept="<?= $officeOn ? '.jpg,.jpeg,.png,.gif,.webp,.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.zip,.gz,.tgz' : '.jpg,.jpeg,.png,.gif,.webp,.pdf,.zip,.gz,.tgz,image/jpeg,image/png,image/gif,image/webp,application/pdf' ?>">
                 <button class="btn btn-outline-primary" type="submit">Прикріпити</button>
             </div>
             <div class="form-text">
-                Дозволено <?= $officeOn ? 'JPG, PNG, GIF, WebP, PDF та документи Office (DOCX, XLSX, PPTX, ODT, ODS, ODP; без макросів)' : 'JPG, PNG, GIF, WebP та PDF' ?>. До <?= \App\Core\View::e(\App\Core\UploadLimits::human($fileMax)) ?> на файл,
+                Дозволено <?= $officeOn ? 'JPG, PNG, GIF, WebP, PDF, документи Office (DOCX, XLSX, PPTX, ODT, ODS, ODP; без макросів)' : 'JPG, PNG, GIF, WebP, PDF' ?> та архіви ZIP, GZ, TAR.GZ (лише завантажуються, сервер їх не розпаковує). До <?= \App\Core\View::e(\App\Core\UploadLimits::human($fileMax)) ?> на файл,
                 до <?= $maxPerRequest ?> файлів за раз (разом не більше <?= \App\Core\View::e(\App\Core\UploadLimits::human($postMax)) ?>).
             </div>
         </form>

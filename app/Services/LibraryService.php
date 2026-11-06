@@ -35,7 +35,17 @@ class LibraryService
         'odp'  => self::ODF . 'presentation',
         'txt'  => 'text/plain',
         'csv'  => 'text/csv',
+        // Архіви: лише зберігаються й завантажуються (ніколи не розпаковуються сервером); tar.gz і tgz — це .gz з tar усередині.
+        'zip'  => 'application/zip',
+        'gz'   => 'application/gzip',
+        'tgz'  => 'application/gzip',
     ];
+
+    /** Розширення архівів (для вкладень і бібліотеки): віддаються лише як завантаження. */
+    public const ARCHIVE_EXTENSIONS = ['zip', 'gz', 'tgz'];
+
+    /** MIME архівів. */
+    public const ARCHIVE_MIMES = ['application/zip', 'application/gzip'];
 
     /** Що браузер може показати сам (решта лише завантажується). */
     public const INLINE_MIMES = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -117,7 +127,7 @@ class LibraryService
             return $fail('дозволені лише файли: ' . self::allowedLabel());
         }
 
-        $problem = self::contentProblem($file['tmp_name'], $extension);
+        $problem = self::contentProblem($file['tmp_name'], $extension, $name);
         if ($problem !== null) {
             return $fail($problem);
         }
@@ -125,7 +135,7 @@ class LibraryService
     }
 
     /** Чому вміст файлу не відповідає розширенню; null — усе гаразд. */
-    public static function contentProblem(string $path, string $extension): ?string
+    public static function contentProblem(string $path, string $extension, string $name = ''): ?string
     {
         $mismatch = 'вміст файлу не відповідає розширенню «.' . $extension . '» (файл пошкоджено або це інший формат під чужою назвою)';
 
@@ -154,8 +164,47 @@ class LibraryService
             case 'txt':
             case 'csv':
                 return self::textProblem($path);
+
+            case 'zip':
+            case 'gz':
+            case 'tgz':
+                return self::archiveProblem($path, $extension, $name, $mismatch);
         }
         return $mismatch;
+    }
+
+    /**
+     * Архів перевіряється за сигнатурою (вміст ніколи не розпаковується на диск):
+     *  - zip — початок «PK\x03\x04» (або порожній архів «PK\x05\x06») і запис кінця центрального каталогу в останніх 64 КБ;
+     *  - gz — «\x1f\x8b\x08»; для імен *.tar.gz і *.tgz перші 512 байт розпакованого потоку мають бути заголовком tar (ознака «ustar»).
+     */
+    private static function archiveProblem(string $path, string $extension, string $name, string $mismatch): ?string
+    {
+        $head = (string) @file_get_contents($path, false, null, 0, 4);
+        if ($extension === 'zip') {
+            if (!str_starts_with($head, "PK\x03\x04") && !str_starts_with($head, "PK\x05\x06")) {
+                return $mismatch;
+            }
+            $size = (int) @filesize($path);
+            $tail = (string) @file_get_contents($path, false, null, max(0, $size - 65557), 65557);
+            return str_contains($tail, "PK\x05\x06") ? null : 'zip-архів пошкоджено (немає кінця каталогу) або це не zip';
+        }
+        if (!str_starts_with($head, "\x1f\x8b\x08")) {
+            return $mismatch;
+        }
+        $lower = strtolower($name);
+        $isTar = $extension === 'tgz' || str_ends_with($lower, '.tar.gz');
+        if ($isTar && function_exists('gzopen')) {
+            $gz = @gzopen($path, 'rb');
+            $block = $gz ? (string) @gzread($gz, 512) : '';
+            if ($gz) {
+                @gzclose($gz);
+            }
+            if (strlen($block) < 512 || substr($block, 257, 5) !== 'ustar') {
+                return 'усередині немає tar-архіву — для звичайного стиснутого файлу використайте розширення «.gz»';
+            }
+        }
+        return null;
     }
 
     /** Файл Office Open XML: коректний ZIP з потрібними частинами й без макросів. */

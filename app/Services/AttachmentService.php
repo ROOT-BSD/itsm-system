@@ -50,6 +50,12 @@ class AttachmentService
         return false;
     }
 
+    /** Чи MIME належить до архіву (zip/gzip) — такі файли лише завантажуються. */
+    public static function isArchiveMime(string $mime): bool
+    {
+        return in_array($mime, LibraryService::ARCHIVE_MIMES, true);
+    }
+
     /** Лише зображення — для форм СТВОРЕННЯ тікета (PDF можна додати пізніше на сторінці тікета). */
     public const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
@@ -204,6 +210,13 @@ class AttachmentService
         $name = self::sanitizeName($file['name']);
         $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
 
+        // Архіви zip / gz / tar.gz (лише там, де дозволено опцією archives; лише для авторизованих — не для публічного порталу й пошти).
+        if (!empty($options['archives']) && in_array($extension, LibraryService::ARCHIVE_EXTENSIONS, true)) {
+            $problem = LibraryService::contentProblem($file['tmp_name'], $extension, $name);
+            return $problem === null
+                ? ['ok' => true, 'name' => $name, 'mime' => LibraryService::TYPES[$extension], 'size' => $size]
+                : $fail($problem);
+        }
         // Документи Office (лише там, де дозволено опцією office): вміст і відсутність макросів перевіряє LibraryService.
         if (!empty($options['office']) && in_array($extension, self::OFFICE_EXTENSIONS, true) && self::officeReady()) {
             $problem = LibraryService::contentProblem($file['tmp_name'], $extension);
@@ -212,7 +225,7 @@ class AttachmentService
                 : $fail($problem);
         }
         if (!isset(self::ALLOWED[$extension]) || !in_array(self::ALLOWED[$extension], $allowedMimes, true)) {
-            return $fail('дозволені лише файли ' . (!empty($options['office']) && self::officeReady() ? 'JPG, PNG, GIF, WebP, PDF, ' . strtoupper(implode(', ', self::OFFICE_EXTENSIONS)) : self::allowedLabel($allowedMimes)));
+            return $fail('дозволені лише файли ' . (!empty($options['office']) && self::officeReady() ? 'JPG, PNG, GIF, WebP, PDF, ' . strtoupper(implode(', ', self::OFFICE_EXTENSIONS)) : self::allowedLabel($allowedMimes)) . (!empty($options['archives']) ? ' та архіви ZIP, GZ, TAR.GZ' : ''));
         }
 
         $mime = self::detectMime($file['tmp_name']);

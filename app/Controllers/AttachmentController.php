@@ -38,7 +38,7 @@ class AttachmentController
             fn(array $f): bool => $f['error'] !== UPLOAD_ERR_NO_FILE
         ));
         if (!$files) {
-            $this->redirect($ownerType, $ownerId, 'error', $ownerType === 'task' && AttachmentService::officeReady() ? 'Оберіть файл для прикріплення (JPG, PNG, GIF, WebP, PDF або документ Office).' : 'Оберіть файл для прикріплення (JPG, PNG, GIF, WebP або PDF).');
+            $this->redirect($ownerType, $ownerId, 'error', $ownerType === 'task' && AttachmentService::officeReady() ? 'Оберіть файл для прикріплення (JPG, PNG, GIF, WebP, PDF, документ Office або архів ZIP, GZ, TAR.GZ).' : 'Оберіть файл для прикріплення (JPG, PNG, GIF, WebP, PDF або архів ZIP, GZ, TAR.GZ).');
         }
 
         $maxPerRequest = (int) Config::get('attachments.max_per_request', 10);
@@ -51,7 +51,7 @@ class AttachmentController
         }
 
         // Документи Office приймаються лише у задачах; тікети (їх бачать і заявники, і пошта) лишаються з JPG, PNG, PDF.
-        $result = AttachmentService::attachUploads($ownerType, $ownerId, $files, Auth::id(), 'web', $ownerType === 'task' ? ['office' => true] : []);
+        $result = AttachmentService::attachUploads($ownerType, $ownerId, $files, Auth::id(), 'web', ['archives' => true] + ($ownerType === 'task' ? ['office' => true] : []));
         $added = $result['added'];
         $errors = $result['errors'];
 
@@ -121,7 +121,7 @@ class AttachmentController
         }
 
         // Зображення та PDF показуємо у браузері; ?download=1 — примусове завантаження; документи Office — лише завантаження.
-        $disposition = isset($_GET['download']) || AttachmentService::isOfficeMime($mime) ? 'attachment' : 'inline';
+        $disposition = isset($_GET['download']) || AttachmentService::isOfficeMime($mime) || AttachmentService::isArchiveMime($mime) ? 'attachment' : 'inline';
         $name = $attachment['original_name'];
         $asciiName = preg_replace('/[^A-Za-z0-9._-]/', '_', $name) ?: 'file';
 
